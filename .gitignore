@@ -2,3 +2,6 @@
 my-settings/
 __pycache__/
 *.pyc
+build/
+dist/
+installer/output/

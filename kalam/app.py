@@ -6,23 +6,28 @@ import queue
 import sys
 import threading
 import time
-import tkinter as tk
+import winreg
 from datetime import datetime
-from pathlib import Path
 
 import keyboard
-import pystray
-from PIL import Image, ImageDraw
+import pyperclip
+from PySide6.QtCore import QTimer
+from PySide6.QtGui import QAction
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
+from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from . import config, inserter
 from .audio import Recorder
-from .engine import Engine
+from .engine import Engine, model_cached, model_download_bytes
+from .icons import mic_icon
+from .main_window import MainWindow
 from .overlay import Overlay
-from .settings_window import SettingsWindow, open_file
+from .settings_window import SettingsDialog, open_file
 
 MODIFIER_FAMILIES = ('ctrl', 'alt', 'shift', 'windows')
-STARTUP = Path(os.environ.get('APPDATA', '')) / 'Microsoft/Windows/Start Menu/Programs/Startup/Kalam.vbs'
 RELOAD_KEYS = ('model', 'device', 'compute_type')
+RUN_KEY = r'Software\Microsoft\Windows\CurrentVersion\Run'
+INSTANCE = 'Kalam-dictation-' + os.environ.get('USERNAME', 'user')
 
 
 def _key_matches(spec, name):
@@ -31,28 +36,48 @@ def _key_matches(spec, name):
     return name == spec or (spec in MODIFIER_FAMILIES and name in (f'left {spec}', f'right {spec}'))
 
 
-def _icon(color):
-    img = Image.new('RGBA', (64, 64), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    d.ellipse((2, 2, 62, 62), fill=color)
-    d.rounded_rectangle((24, 12, 40, 38), radius=8, fill='white')     # mic head
-    d.arc((17, 22, 47, 46), 0, 180, fill='white', width=4)            # holder
-    d.line((32, 46, 32, 53), fill='white', width=4)
-    d.line((24, 53, 40, 53), fill='white', width=4)
-    return img
+def _own_window_focused():
+    hwnd = ctypes.windll.user32.GetForegroundWindow()
+    pid = ctypes.c_ulong()
+    ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    return pid.value == os.getpid()
 
 
-ICONS = {s: _icon(c) for s, c in {'loading': '#8B8D98', 'ready': '#30A46C', 'listen': '#E5484D',
-                                  'work': '#F5A524', 'paused': '#8B8D98', 'error': '#E5484D'}.items()}
+def _launch_command():
+    if config.FROZEN:
+        return f'"{sys.executable}" --tray'
+    pyw = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')
+    return f'"{pyw}" "{config.ROOT / "kalam.pyw"}" --tray'
+
+
+def autostart_enabled():
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
+            winreg.QueryValueEx(k, 'Kalam')
+            return True
+    except OSError:
+        return False
+
+
+def set_autostart(on):
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
+        if on:
+            winreg.SetValueEx(k, 'Kalam', 0, winreg.REG_SZ, _launch_command())
+        else:
+            try:
+                winreg.DeleteValue(k, 'Kalam')
+            except OSError:
+                pass
 
 
 class App:
-    def __init__(self):
+    def __init__(self, qapp, start_hidden):
+        self.qapp = qapp
         config.ensure_data_dir()
         self.cfg = config.load()
         self.engine = Engine(self.cfg)
         self.recorder = Recorder(self.cfg)
-        self.ui = queue.Queue()     # work for the Tk thread
+        self.ui = queue.Queue()     # work for the Qt thread
         self.jobs = queue.Queue()   # audio / reload requests for the worker
         self.state = 'loading'
         self.mode = None            # 'hold' | 'toggle' while recording
@@ -60,54 +85,77 @@ class App:
         self.pressed = set()
         self.toggle_latched = False
         self.rec_started = 0.0
-        self.hotkey_handles = []
+        self.downloading = False
 
-        self.root = tk.Tk()
-        self.root.withdraw()
-        self.overlay = Overlay(self.root)
-        self.tray = pystray.Icon('kalam', ICONS['loading'], 'Kalam: loading…', self._menu())
+        self.overlay = Overlay()
+        self.win = MainWindow(self.cfg)
+        self.win.mic_clicked.connect(self.on_toggle)
+        self.win.model_chosen.connect(self.choose_model)
+        self.win.settings_clicked.connect(self.open_settings)
+        self.win.history_clicked.connect(lambda: open_file('history.txt'))
+        self.win.closed_to_tray.connect(self._closed_to_tray)
+        self._tray()
+        self.pump = QTimer(timeout=self._pump, interval=30)
+        self.ticker = QTimer(timeout=self._tick, interval=80)
+        self.dl_timer = QTimer(timeout=self._download_progress, interval=1000)
+        if not start_hidden:
+            self.win.show_front()
 
     # ── tray ─────────────────────────────────────────────────────────────────
-    def _menu(self):
-        item = pystray.MenuItem
-        return pystray.Menu(
-            item(lambda _: self._status_text(), None, enabled=False),
-            pystray.Menu.SEPARATOR,
-            item('Settings…', lambda: self.ui.put(self.open_settings), default=True),
-            item('Edit my Egyptian style prompt', lambda: open_file('prompt_ar.txt')),
-            item('Edit hint words', lambda: open_file('words.txt')),
-            item('Edit fixes', lambda: open_file('fixes.txt')),
-            item('Open history', lambda: open_file('history.txt')),
-            pystray.Menu.SEPARATOR,
-            item('Pause', self.toggle_pause, checked=lambda _: self.paused),
-            item('Start with Windows', self.toggle_startup, checked=lambda _: STARTUP.exists()),
-            item('Quit', lambda: self.ui.put(self.quit)),
-        )
+    def _tray(self):
+        self.tray = QSystemTrayIcon(mic_icon('loading'))
+        m = QMenu()
+        m.addAction('Open Kalam', self.win.show_front)
+        m.addAction('Settings…', self.open_settings)
+        m.addSeparator()
+        m.addAction('Edit my Egyptian style prompt', lambda: open_file('prompt_ar.txt'))
+        m.addAction('Edit hint words', lambda: open_file('words.txt'))
+        m.addAction('Edit fixes', lambda: open_file('fixes.txt'))
+        m.addAction('Open history', lambda: open_file('history.txt'))
+        m.addSeparator()
+        self.pause_action = QAction('Pause', m, checkable=True, triggered=self.toggle_pause)
+        m.addAction(self.pause_action)
+        self.autostart_action = QAction('Start with Windows', m, checkable=True, checked=autostart_enabled(),
+                                        triggered=set_autostart)
+        m.addAction(self.autostart_action)
+        m.addSeparator()
+        m.addAction('Quit Kalam', self.quit)
+        self.tray.setContextMenu(m)
+        self.tray.activated.connect(lambda r: self.win.show_front() if r in (
+            QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick) else None)
+        self.tray.show()
+
+    def _closed_to_tray(self):
+        if not self.cfg.get('tray_tip_shown'):
+            self.tray.showMessage('Kalam is still running',
+                                  f'Hold {self.cfg["hold_key"].title()} to dictate. Right-click the tray icon to quit.',
+                                  mic_icon('ready'), 5000)
+            self.cfg['tray_tip_shown'] = True
+            config.save(self.cfg)
 
     def _status_text(self):
-        hold, tog = self.cfg['hold_key'], self.cfg['toggle_key']
-        if self.state == 'loading':
+        s = self.state
+        if s == 'loading':
             return f'Loading {self.cfg["model"]}…'
-        if self.state == 'error':
-            return 'Error, see kalam.log'
-        return f'{self.cfg["model"]} on {self.engine.device} · hold {hold} · or {tog}'
+        if s == 'error':
+            return 'Model failed to load'
+        if s == 'listen':
+            secs = int(time.time() - self.rec_started)
+            return f'Listening {secs // 60}:{secs % 60:02d}'
+        if s == 'work':
+            return 'Writing…'
+        return 'Paused' if self.paused else 'Ready'
 
     def set_state(self, state):
         self.state = state
-        self.tray.icon = ICONS['paused' if self.paused and state == 'ready' else state]
-        self.tray.title = f'Kalam: {self._status_text()}'
+        icon_state = 'paused' if self.paused and state == 'ready' else state
+        self.tray.setIcon(mic_icon(icon_state))
+        self.tray.setToolTip(f'Kalam: {self._status_text()}')
+        self.win.set_state(icon_state, self._status_text(), self.recorder.level)
 
-    def toggle_pause(self):
-        self.paused = not self.paused
+    def toggle_pause(self, on):
+        self.paused = on
         self.set_state(self.state)
-
-    def toggle_startup(self):
-        if STARTUP.exists():
-            STARTUP.unlink()
-            return
-        pyw = Path(sys.executable).with_name('pythonw.exe')
-        entry = config.ROOT / 'kalam.pyw'
-        STARTUP.write_text(f'CreateObject("WScript.Shell").Run """{pyw}"" ""{entry}""", 0\n', encoding='utf-16')
 
     # ── hotkeys (keyboard thread) ────────────────────────────────────────────
     def register_hotkeys(self):
@@ -117,7 +165,7 @@ class App:
         tog = self.cfg['toggle_key'].strip()
         if tog:
             # swallow the toggle combo so it does nothing in the focused app
-            self.hotkey_handles = [keyboard.add_hotkey(tog, lambda: None, suppress=True, trigger_on_release=False)]
+            keyboard.add_hotkey(tog, lambda: None, suppress=True, trigger_on_release=False)
 
     def _on_key(self, e):
         name = (e.name or '').lower()
@@ -142,33 +190,33 @@ class App:
             if self.mode == 'hold' and any(_key_matches(k, name) for k in hold):
                 self.ui.put(self.finish)
 
-    # ── recording (Tk thread) ────────────────────────────────────────────────
+    # ── recording (Qt thread) ────────────────────────────────────────────────
     def start(self, mode):
         if self.mode or self.paused:
             return
         if self.state not in ('ready', 'work'):  # recording while the last clip is still being written is fine
-            self.overlay.show('Still loading the model…' if self.state == 'loading' else 'Model not loaded', 'info', 1.5)
+            self.overlay.show_msg('Still loading the model…' if self.state == 'loading' else 'Model not loaded', 'info', 1.5)
             return
         try:
             self.recorder.start()
-        except Exception as e:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             logging.exception('mic')
-            self.overlay.show('Microphone error', 'error', 3)
+            self.overlay.show_msg('Microphone error', 'error', 3)
             return
         self.mode, self.rec_started = mode, time.time()
         self.set_state('listen')
-        self._tick()
+        self.ticker.start()
 
     def _tick(self):
         if not self.mode:
+            self.ticker.stop()
             return
         secs = time.time() - self.rec_started
         hint = '  (Esc cancels)' if self.mode == 'toggle' else ''
-        self.overlay.show(f'Listening {int(secs) // 60}:{int(secs) % 60:02d}{hint}', 'listen', level=self.recorder.level)
+        self.overlay.show_msg(f'{self._status_text()}{hint}', 'listen', level=self.recorder.level)
+        self.win.set_state('listen', self._status_text(), self.recorder.level)
         if secs > self.cfg['max_seconds']:
             self.finish()
-            return
-        self.root.after(80, self._tick)
 
     def on_toggle(self):
         if self.mode == 'toggle':
@@ -182,7 +230,7 @@ class App:
         self.mode = None
         audio = self.recorder.stop()
         self.set_state('work')
-        self.overlay.show('Writing…', 'work')
+        self.overlay.show_msg('Writing…', 'work')
         self.jobs.put(('audio', audio))
 
     def cancel(self):
@@ -191,7 +239,7 @@ class App:
         self.mode = None
         self.recorder.stop()
         self.set_state('ready')
-        self.overlay.show('Cancelled', 'info', 1.0)
+        self.overlay.show_msg('Cancelled', 'info', 1.0)
 
     # ── worker thread: model + transcription ─────────────────────────────────
     def worker(self):
@@ -200,34 +248,69 @@ class App:
             if kind == 'quit':
                 return
             if kind == 'load':
-                self.ui.put(lambda: (self.set_state('loading'), self.overlay.show(f'Loading {self.cfg["model"]}…', 'info')))
-                try:
-                    dev = self.engine.load()
-                    logging.info('loaded %s on %s', self.cfg['model'], dev)
-                    self.ui.put(lambda: (self.set_state('ready'), self.overlay.show(f'Ready · hold {self.cfg["hold_key"]}', 'ok', 2.5)))
-                except Exception:  # noqa: BLE001
-                    logging.exception('load')
-                    self.ui.put(lambda: (self.set_state('error'), self.overlay.show('Model failed to load, see kalam.log', 'error', 6)))
+                self._load()
                 continue
             try:
                 text, info = self.engine.transcribe(payload)
                 logging.info('%s %s', info, text)
-                if text:
-                    self._history(text, info)
-                    inserter.insert(text + (' ' if self.cfg['trailing_space'] else ''), self.cfg['insert_method'])
-                    self.ui.put(lambda: self._done())
-                else:
+                if not text:
                     self.ui.put(lambda: self._done('Didn’t catch anything', 'info', 1.2))
+                    continue
+                self._history(text, info)
+                out = text + (' ' if self.cfg['trailing_space'] else '')
+                if _own_window_focused():
+                    # dictated from Kalam's own window: nowhere to paste, so hand it over via the clipboard
+                    pyperclip.copy(text)
+                    self.ui.put(lambda t=text: (self.win.set_last(t), self._done('Copied · paste it with Ctrl+V', 'ok', 2.5)))
+                else:
+                    inserter.insert(out, self.cfg['insert_method'])
+                    self.ui.put(lambda t=text: (self.win.set_last(t), self._done()))
             except Exception:  # noqa: BLE001
                 logging.exception('transcribe')
                 self.ui.put(lambda: self._done('Error, see kalam.log', 'error', 3))
+
+    def _load(self):
+        name = self.cfg['model']
+        self.downloading = not model_cached(name)
+        self.ui.put(lambda: (self.set_state('loading'), self.dl_timer.start() if self.downloading else None,
+                             self.win.set_footer(name)))
+        try:
+            dev = self.engine.load()
+            logging.info('loaded %s on %s', name, dev)
+            where = 'GPU' if dev.startswith('cuda') else 'CPU'
+            self.ui.put(lambda: self._loaded(f'{name} · {where}'))
+        except Exception:  # noqa: BLE001
+            logging.exception('load')
+            self.ui.put(self._load_failed)
+
+    def _loaded(self, footer):
+        self.downloading = False
+        self.dl_timer.stop()
+        self.set_state('ready')
+        self.win.set_footer(footer)
+        if not self.win.isVisible():
+            self.overlay.show_msg(f'Kalam ready · hold {self.cfg["hold_key"].title()}', 'ok', 2.5)
+
+    def _load_failed(self):
+        self.downloading = False
+        self.dl_timer.stop()
+        self.set_state('error')
+        self.win.set_footer('see kalam.log (Settings → model / Run on)')
+        self.overlay.show_msg('Model failed to load', 'error', 6)
+
+    def _download_progress(self):
+        if self.state != 'loading':
+            return
+        gb = model_download_bytes(self.cfg['model']) / 1e9
+        self.win.set_state('loading', f'Downloading {self.cfg["model"]}… {gb:.1f} GB')
+        self.tray.setToolTip(f'Kalam: downloading the model (first time only) {gb:.1f} GB')
 
     def _done(self, msg=None, kind='info', secs=None):
         if self.mode:  # already recording the next one
             return
         self.set_state('ready' if self.jobs.empty() else 'work')
         if msg:
-            self.overlay.show(msg, kind, secs)
+            self.overlay.show_msg(msg, kind, secs)
         elif self.jobs.empty():
             self.overlay.hide()
 
@@ -238,18 +321,24 @@ class App:
 
     # ── settings ─────────────────────────────────────────────────────────────
     def open_settings(self):
-        SettingsWindow(self.root, self.cfg, self.apply_settings)
+        self.win.show_front()
+        SettingsDialog(self.cfg, self.apply_settings, self.win).exec()
+
+    def choose_model(self, name):
+        if name and name != self.cfg['model']:
+            self.apply_settings(dict(self.cfg, model=name))
 
     def apply_settings(self, new):
         reload = any(new[k] != self.cfg[k] for k in RELOAD_KEYS)
         self.cfg.update(new)  # engine and recorder share this dict
         config.save(self.cfg)
         self.register_hotkeys()
+        self.win.refresh_hint()
         try:
             self.recorder.apply_settings()
         except Exception:  # noqa: BLE001
             logging.exception('mic')
-            self.overlay.show('Microphone error', 'error', 3)
+            self.overlay.show_msg('Microphone error', 'error', 3)
         if reload:
             self.jobs.put(('load', None))
         else:
@@ -263,13 +352,13 @@ class App:
             except queue.Empty:
                 break
             fn()
-        self.root.after(30, self._pump)
 
     def quit(self):
         self.jobs.put(('quit', None))
         keyboard.unhook_all()
-        self.tray.stop()
-        self.root.destroy()
+        self.tray.hide()
+        self.win.quitting = True
+        self.qapp.quit()
 
     def run(self):
         threading.Thread(target=self.worker, daemon=True).start()
@@ -279,22 +368,53 @@ class App:
             self.recorder.apply_settings()
         except Exception:  # noqa: BLE001
             logging.exception('mic')
-        self.tray.run_detached()
-        self._pump()
-        self.root.mainloop()
+        self.pump.start()
+        return self.qapp.exec()
+
+
+def transcribe_file(path):
+    """Kalam.exe --transcribe voice.wav: checks the whole pipeline without a mic; result goes to kalam.log."""
+    import wave
+
+    import numpy as np
+
+    from .audio import _to_16k
+    with wave.open(path) as wf:
+        rate, ch = wf.getframerate(), wf.getnchannels()
+        x = np.frombuffer(wf.readframes(wf.getnframes()), np.int16).astype(np.float32) / 32768
+    engine = Engine(config.load())
+    logging.info('transcribe-file loaded on %s', engine.load())
+    text, info = engine.transcribe(_to_16k(x.reshape(-1, ch).mean(1), rate))
+    logging.info('transcribe-file %s %s', info, text)
+    return 0
 
 
 def main():
     config.ensure_data_dir()
     logging.basicConfig(filename=config.DATA_DIR / 'kalam.log', level=logging.INFO, encoding='utf-8',
                         format='%(asctime)s %(levelname)s %(message)s')
-    # one instance only: two copies would both paste every dictation
-    ctypes.windll.kernel32.CreateMutexW(None, False, 'Kalam-dictation-single-instance')
-    if ctypes.windll.kernel32.GetLastError() == 183:
-        ctypes.windll.user32.MessageBoxW(None, 'Kalam is already running (look for the mic icon in the tray).', 'Kalam', 0x40)
-        return
+    if len(sys.argv) > 2 and sys.argv[1] == '--transcribe':
+        return transcribe_file(sys.argv[2])
+    qapp = QApplication(sys.argv)
+    qapp.setApplicationName('Kalam')
+    qapp.setQuitOnLastWindowClosed(False)  # closing the window keeps Kalam in the tray
+    qapp.setWindowIcon(mic_icon('ready'))
+
+    # one instance only (two copies would both paste every dictation); a second launch opens the window
+    sock = QLocalSocket()
+    sock.connectToServer(INSTANCE)
+    if sock.waitForConnected(300):
+        sock.write(b'show')
+        sock.waitForBytesWritten(300)
+        return 0
+    QLocalServer.removeServer(INSTANCE)
+    server = QLocalServer()
+    server.listen(INSTANCE)
+
     try:
-        App().run()
+        app = App(qapp, start_hidden='--tray' in sys.argv)
+        server.newConnection.connect(lambda: (server.nextPendingConnection(), app.win.show_front()))
+        return app.run()
     except Exception:  # noqa: BLE001
         logging.exception('fatal')
         raise

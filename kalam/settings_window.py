@@ -1,10 +1,11 @@
-"""Settings window: model, language, shortcuts, mic, insert method."""
+"""Settings dialog: model, language, shortcuts, mic, insert method."""
 import os
 import threading
-import tkinter as tk
-from tkinter import ttk
 
 import keyboard
+from PySide6.QtCore import QObject, Signal
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
+                               QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget)
 
 from . import audio, config
 
@@ -18,97 +19,113 @@ DEFAULT_MIC = '(Windows default)'
 
 def open_file(name):
     config.ensure_data_dir()
-    os.startfile(config.DATA_DIR / name)
+    path = config.DATA_DIR / name
+    if not path.exists():
+        path.write_text('', encoding='utf-8')
+    os.startfile(path)
 
 
-class SettingsWindow:
-    def __init__(self, root, cfg, on_save):
+class _Captured(QObject):
+    done = Signal(str)
+
+
+class SettingsDialog(QDialog):
+    def __init__(self, cfg, on_save, parent=None):
+        super().__init__(parent)
         self.cfg, self.on_save = cfg, on_save
-        w = self.win = tk.Toplevel(root)
-        w.title('Kalam settings')
-        w.resizable(False, False)
-        w.attributes('-topmost', True)
-        f = ttk.Frame(w, padding=16)
-        f.pack(fill='both')
-        self.v = {}
-        row = 0
+        self.setWindowTitle('Kalam settings')
+        self.setMinimumWidth(520)
+        form = QFormLayout()
+        form.setVerticalSpacing(10)
 
-        def label(text):
-            nonlocal row
-            ttk.Label(f, text=text).grid(row=row, column=0, sticky='w', pady=4, padx=(0, 12))
+        self.model = QComboBox(editable=True)
+        self.model.addItems(config.MODELS)
+        self.model.setCurrentText(cfg['model'])
+        form.addRow('Whisper model', self.model)
+        hint = QLabel('large-v3 = best for Egyptian. Turbo = faster. You can also paste a Hugging Face model id.')
+        hint.setWordWrap(True)
+        hint.setStyleSheet('color: gray;')
+        form.addRow('', hint)
 
-        label('Whisper model')
-        self.v['model'] = tk.StringVar(value=cfg['model'])
-        ttk.Combobox(f, textvariable=self.v['model'], values=config.MODELS, width=44).grid(row=row, column=1, columnspan=2, sticky='we')
-        row += 1
-        ttk.Label(f, text='large-v3 = best for Egyptian. Turbo = faster. You can also paste a Hugging Face model id.',
-                  foreground='#666').grid(row=row, column=1, columnspan=2, sticky='w')
-        row += 1
+        self.device = QComboBox()
+        self.device.addItems(['auto', 'cuda', 'cpu'])
+        self.device.setCurrentText(cfg['device'])
+        form.addRow('Run on', self.device)
 
-        label('Run on')
-        self.v['device'] = tk.StringVar(value=cfg['device'])
-        ttk.Combobox(f, textvariable=self.v['device'], values=['auto', 'cuda', 'cpu'], state='readonly', width=12).grid(row=row, column=1, sticky='w')
-        row += 1
+        self.language = QComboBox()
+        self.language.addItems(list(LANGS.values()))
+        self.language.setCurrentText(LANGS[cfg['language']])
+        form.addRow('Language', self.language)
 
-        label('Language')
-        self.v['language'] = tk.StringVar(value=LANGS[cfg['language']])
-        ttk.Combobox(f, textvariable=self.v['language'], values=list(LANGS.values()), state='readonly', width=44).grid(row=row, column=1, columnspan=2, sticky='we')
-        row += 1
-
+        self.keys = {}
         for key, text in (('hold_key', 'Hold to talk'), ('toggle_key', 'Press to start / stop')):
-            label(text)
-            self.v[key] = tk.StringVar(value=cfg[key])
-            ttk.Entry(f, textvariable=self.v[key], width=30).grid(row=row, column=1, sticky='we')
-            ttk.Button(f, text='Set…', command=lambda k=key: self.capture(k)).grid(row=row, column=2, sticky='e', padx=(8, 0))
-            row += 1
+            edit = QLineEdit(cfg[key])
+            btn = QPushButton('Set…')
+            btn.clicked.connect(lambda _=False, k=key: self.capture(k))
+            row = QHBoxLayout()
+            row.addWidget(edit, 1)
+            row.addWidget(btn)
+            w = QWidget()
+            w.setLayout(row)
+            row.setContentsMargins(0, 0, 0, 0)
+            self.keys[key] = edit
+            form.addRow(text, w)
 
-        label('Microphone')
-        mics = [DEFAULT_MIC] + audio.list_mics()
-        self.v['mic_device'] = tk.StringVar(value=cfg['mic_device'] or DEFAULT_MIC)
-        ttk.Combobox(f, textvariable=self.v['mic_device'], values=mics, state='readonly', width=44).grid(row=row, column=1, columnspan=2, sticky='we')
-        row += 1
+        self.mic = QComboBox()
+        self.mic.addItems([DEFAULT_MIC] + audio.list_mics())
+        self.mic.setCurrentText(cfg['mic_device'] or DEFAULT_MIC)
+        form.addRow('Microphone', self.mic)
 
-        label('Insert text by')
-        self.v['insert_method'] = tk.StringVar(value=cfg['insert_method'])
-        ttk.Combobox(f, textvariable=self.v['insert_method'], values=['paste', 'type'], state='readonly', width=12).grid(row=row, column=1, sticky='w')
-        row += 1
+        self.insert = QComboBox()
+        self.insert.addItems(['paste', 'type'])
+        self.insert.setCurrentText(cfg['insert_method'])
+        form.addRow('Insert text by', self.insert)
 
+        self.checks = {}
         for key, text in (('trailing_space', 'Add a space after each dictation'),
                           ('use_context', 'Remember my last sentence (keeps the style consistent)'),
-                          ('remove_fillers', 'Remove fillers (إممم، ااا، umm)'),
+                          ('remove_fillers', 'Remove fillers like “umm” and “إممم”'),
                           ('keep_mic_open', 'Keep mic open so the first word is never cut')):
-            self.v[key] = tk.BooleanVar(value=cfg[key])
-            ttk.Checkbutton(f, text=text, variable=self.v[key]).grid(row=row, column=0, columnspan=3, sticky='w')
-            row += 1
+            cb = QCheckBox(text)
+            cb.setChecked(bool(cfg[key]))
+            self.checks[key] = cb
+            form.addRow('', cb)
 
-        files = ttk.Frame(f)
-        files.grid(row=row, column=0, columnspan=3, sticky='w', pady=(12, 0))
+        files = QHBoxLayout()
         for name, text in (('prompt_ar.txt', 'My Egyptian style prompt'), ('words.txt', 'Hint words'), ('fixes.txt', 'Fixes')):
-            ttk.Button(files, text=text, command=lambda n=name: open_file(n)).pack(side='left', padx=(0, 6))
-        row += 1
+            b = QPushButton(text)
+            b.clicked.connect(lambda _=False, n=name: open_file(n))
+            files.addWidget(b)
+        files.addStretch(1)
 
-        btns = ttk.Frame(f)
-        btns.grid(row=row, column=0, columnspan=3, sticky='e', pady=(16, 0))
-        ttk.Button(btns, text='Cancel', command=w.destroy).pack(side='right')
-        ttk.Button(btns, text='Save', command=self.save).pack(side='right', padx=6)
-        w.focus_force()
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.save)
+        buttons.rejected.connect(self.reject)
+
+        lay = QVBoxLayout(self)
+        lay.addLayout(form)
+        lay.addSpacing(8)
+        lay.addLayout(files)
+        lay.addSpacing(8)
+        lay.addWidget(buttons)
 
     def capture(self, key):
-        var = self.v[key]
-        var.set('press the keys…')
-
-        def run():
-            hk = keyboard.read_hotkey(suppress=False)
-            self.win.after(0, lambda: var.set(hk))
-        threading.Thread(target=run, daemon=True).start()
+        edit = self.keys[key]
+        edit.setText('press the keys…')
+        sig = _Captured(self)
+        sig.done.connect(edit.setText)
+        threading.Thread(target=lambda: sig.done.emit(keyboard.read_hotkey(suppress=False)), daemon=True).start()
 
     def save(self):
         new = dict(self.cfg)
-        for k, var in self.v.items():
-            new[k] = var.get()
-        new['language'] = next(k for k, v in LANGS.items() if v == new['language'])
-        if new['mic_device'] == DEFAULT_MIC:
-            new['mic_device'] = ''
-        new['model'] = new['model'].strip() or 'large-v3'
-        self.win.destroy()
+        new['model'] = self.model.currentText().strip() or 'large-v3'
+        new['device'] = self.device.currentText()
+        new['language'] = next(k for k, v in LANGS.items() if v == self.language.currentText())
+        for k, edit in self.keys.items():
+            new[k] = edit.text().strip()
+        new['mic_device'] = '' if self.mic.currentText() == DEFAULT_MIC else self.mic.currentText()
+        new['insert_method'] = self.insert.currentText()
+        for k, cb in self.checks.items():
+            new[k] = cb.isChecked()
+        self.accept()
         self.on_save(new)

@@ -49,7 +49,13 @@ def drive(a):
     a.ui.put(a.quit)
 
 import logging; logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
-a = kapp.App()
+from PySide6.QtWidgets import QApplication
+qapp = QApplication(sys.argv); qapp.setQuitOnLastWindowClosed(False)
+a = kapp.App(qapp, start_hidden=True)
 threading.Thread(target=drive, args=(a,), daemon=True).start()
+inserted = []
+real_insert = kapp.inserter.insert
+kapp.inserter.insert = lambda t, m='paste': (inserted.append(t), real_insert(t, m))
 a.run()
+log('insert called with:', inserted)
 log('quit ok')

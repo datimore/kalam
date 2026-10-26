@@ -9,24 +9,34 @@ Built for Egyptian Arabic mixed with English, written the way you say it: no for
 Works in Word, Notion, the browser, Outlook, WhatsApp desktop: any app with a text cursor.
 Everything runs on your own computer. Nothing is uploaded.
 
+<p align="center"><img src="assets/screenshot.png" width="340" alt="Kalam window"></p>
+
+## Install (Windows 10 / 11)
+
+1. Download **`Kalam-Setup-x.y.z.exe`** from [Releases](https://github.com/datimore/kalam/releases/latest) (~520 MB).
+2. Run it. No admin rights needed. Choose a desktop shortcut and *Start with Windows* if you like.
+3. Open **Kalam** from the Start menu. The first start downloads the speech model
+   (large-v3, ~3 GB, one time only); the window shows the progress.
+
+An NVIDIA graphics card makes it fast (~1.5–2.5 s per sentence) and is used automatically.
+Without one it runs on the processor: slower, so pick *large-v3-turbo* in the window.
+
+Uninstall from **Settings → Apps → Kalam**.
+
 ## How to use
 
 | Do this | What happens |
 |---|---|
 | **Hold Right Ctrl**, speak, release | Text is inserted at the cursor ~1–2 s later |
 | **Ctrl+Alt+Space**, speak, **Ctrl+Alt+Space** again | Same, for longer dictation (no key to hold) |
+| Click the **mic button** in the Kalam window | Start / stop; the text goes to the clipboard, ready to paste |
 | **Esc** while it's listening | Cancel, nothing is inserted |
 
-A small pill at the bottom of the screen shows *Listening* (red) and *Writing…* (amber).
-It never takes the cursor away from your document.
-The mic icon in the system tray has the menu: settings, pause, start with Windows, quit.
-
-## Install (Windows)
-
-1. Install [Python 3.11+](https://www.python.org/downloads/) (tick *Add to PATH*).
-2. Double-click **`install.bat`**. It installs GPU support automatically when it finds an NVIDIA card.
-3. Double-click **`Start Kalam.bat`**. The first start downloads the model (large-v3, ~3 GB).
-4. Optional: tray icon → **Start with Windows**.
+- **The Kalam window** shows the status, your last dictation (with a Copy button), the model picker, Settings and History.
+  Closing it (✕) keeps Kalam running in the tray, so the shortcut still works. Quit from the tray icon.
+- **A small pill** at the bottom of the screen shows *Listening* (red) and *Writing…* (amber).
+  It never takes the cursor away from your document.
+- **The tray icon** (green mic) opens the window on click; right-click for settings, pause, start with Windows, quit.
 
 ## Why it keeps your Egyptian Arabic
 
@@ -47,7 +57,8 @@ it invents on silence ("اشتركوا في القناة") are dropped, and repe
 
 ## Make it understand you better
 
-Tray icon → the files below (also in the `my-settings` folder). Changes apply on the next dictation; no restart.
+Settings → the buttons at the bottom, or the tray menu. The files live in `%APPDATA%\Kalam`
+(`my-settings` when running from source). Changes apply on the next dictation; no restart.
 
 | File | What to put there |
 |---|---|
@@ -58,7 +69,7 @@ Tray icon → the files below (also in the `my-settings` folder). Changes apply 
 
 ## Models
 
-Settings → *Whisper model*. Default **large-v3**.
+Pick it in the Kalam window (*Model*) or in Settings. Default **large-v3**.
 
 | Model | Egyptian quality | Speed | Notes |
 |---|---|---|---|
@@ -84,20 +95,30 @@ Models download the first time you pick them.
 - **Nothing appears in one specific app**: if that app runs *as administrator*, Windows blocks other apps from
   typing into it. Run Kalam as administrator too, or switch *Insert text by* to *type*.
 - **First word missing**: start speaking a beat after pressing, or turn on *Keep mic open*.
-- **Slow**: check the tray tooltip says `cuda`. If it says `cpu`, re-run `install.bat`, or pick large-v3-turbo.
+- **Slow**: the bottom of the Kalam window says `GPU` or `CPU`. On CPU, pick large-v3-turbo.
 - **Copied an image right before dictating**: paste mode can only restore copied *text*.
-- Logs: `my-settings/kalam.log`.
+- **Check the whole pipeline without a mic**: `Kalam.exe --transcribe voice.wav` writes the result to `kalam.log`.
+- Logs: `%APPDATA%\Kalam\kalam.log`. Downloaded models: `%USERPROFILE%\.cache\huggingface\hub`
+  (not removed on uninstall; delete the `models--Systran--faster-whisper-*` folders to free the space).
 
 ## For developers
 
+Run from source: Python 3.11+, then `install.bat` (creates `.venv`, adds GPU libraries if an NVIDIA card is found)
+and `Start Kalam.bat`.
+Build the exe and the installer: install [Inno Setup 6](https://jrsoftware.org/isinfo.php), then `build.bat`
+(→ `installer\output\Kalam-Setup-x.y.z.exe`).
+
 ```
-kalam/engine.py     faster-whisper + prompt + hotwords + fixes + hallucination filters
-kalam/audio.py      mic capture, resampling to 16 kHz, optional pre-roll
-kalam/inserter.py   paste / type at the cursor
-kalam/app.py        hotkeys, tray icon, worker thread
-kalam/overlay.py    the non-focus-stealing pill
-tools/try_file.py   run the engine on clips of a WAV:  python tools/try_file.py voice.wav 0:6 12:8
-tools/e2e.py        end-to-end: real hotkeys + paste, with a WAV in place of the mic
+kalam/engine.py          faster-whisper + prompt + hotwords + fixes + hallucination filters
+kalam/audio.py           mic capture, resampling to 16 kHz, optional pre-roll
+kalam/inserter.py        paste / type at the cursor
+kalam/app.py             hotkeys, tray, worker thread, single instance, start with Windows
+kalam/main_window.py     the mini window (Qt)
+kalam/overlay.py         the non-focus-stealing pill
+kalam.spec               PyInstaller recipe (ships only cuBLAS from the NVIDIA libraries)
+installer/kalam.iss      Inno Setup script (per-user install, no admin)
+tools/try_file.py        run the engine on clips of a WAV:  python tools/try_file.py voice.wav 0:6 12:8
+tools/e2e.py             end-to-end: real hotkeys + paste, with a WAV in place of the mic
 ```
 
 ## License

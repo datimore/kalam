@@ -2,12 +2,16 @@
 import json
 import os
 import shutil
+import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+FROZEN = getattr(sys, 'frozen', False)  # running from the installed Kalam.exe
+ROOT = Path(sys._MEIPASS) if FROZEN else Path(__file__).resolve().parent.parent
 DEFAULTS_DIR = ROOT / 'defaults'
-# user data lives next to the app so it is easy to find and back up
-DATA_DIR = Path(os.environ.get('KALAM_HOME', ROOT / 'my-settings'))
+ASSETS_DIR = ROOT / 'assets'
+# installed: %APPDATA%\Kalam (Program files are read-only); from source: next to the code
+_default_home = Path(os.environ.get('APPDATA', Path.home())) / 'Kalam' if FROZEN else ROOT / 'my-settings'
+DATA_DIR = Path(os.environ.get('KALAM_HOME', _default_home))
 
 MODELS = ['large-v3', 'large-v3-turbo', 'large-v2', 'medium', 'small', 'base', 'tiny']
 

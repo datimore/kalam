@@ -1,0 +1,3 @@
+# Only for building Kalam.exe and the installer
+pyinstaller>=6.10
+pillow

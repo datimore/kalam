@@ -19,7 +19,8 @@ SR = 16000
 
 def _add_cuda_dlls():
     # cuBLAS / cuDNN come from the nvidia-* pip wheels; Windows needs their bin dirs on the DLL path
-    for d in glob.glob(os.path.join(sys.prefix, 'Lib', 'site-packages', 'nvidia', '*', 'bin')):
+    base = sys._MEIPASS if getattr(sys, 'frozen', False) else os.path.join(sys.prefix, 'Lib', 'site-packages')
+    for d in glob.glob(os.path.join(base, 'nvidia', '*', 'bin')):
         try:
             os.add_dll_directory(d)
         except OSError:
@@ -37,6 +38,36 @@ HALLUCINATIONS = [
 ]
 FILLER = re.compile(r'(?<!\w)(?:[اإأآ]?م{2,}|[اآ]{3,}|uh+|um+|hmm+|erm)(?!\w)[،,]?\s*', re.IGNORECASE)
 ARTICLE = re.compile(r'(?<!\w)(ال|بال|وال|فال|كال|لل)ـ?\s*(?=[A-Za-z])')
+
+
+def model_repo(name):
+    from faster_whisper.utils import _MODELS
+    return _MODELS.get(name, name)
+
+
+def model_cached(name):
+    """True when the model is already on disk (no download needed)."""
+    if os.path.isdir(name):
+        return True
+    from faster_whisper.utils import download_model
+    try:
+        download_model(name, local_files_only=True)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def model_download_bytes(name):
+    """Bytes of the model downloaded so far (for the first-run progress line)."""
+    from huggingface_hub.constants import HF_HUB_CACHE
+    folder = os.path.join(HF_HUB_CACHE, 'models--' + model_repo(name).replace('/', '--'))
+    total = 0
+    for dirpath, _, files in os.walk(folder):
+        for f in files:
+            fp = os.path.join(dirpath, f)
+            if not os.path.islink(fp):
+                total += os.path.getsize(fp)
+    return total
 
 
 class Engine:
@@ -63,7 +94,9 @@ class Engine:
             if ct == 'auto':
                 ct = 'int8_float16' if dev == 'cuda' else 'int8'
             try:
-                self.model = WhisperModel(self.cfg['model'], device=dev, compute_type=ct)
+                # cached models load without touching the network (works offline, starts faster)
+                self.model = WhisperModel(self.cfg['model'], device=dev, compute_type=ct,
+                                          local_files_only=model_cached(self.cfg['model']))
                 self.device = f'{dev} ({ct})'
                 # warm-up so the first real dictation is fast
                 self.model.transcribe(np.zeros(SR, np.float32), language='ar', beam_size=1)

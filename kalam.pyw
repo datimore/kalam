@@ -9,4 +9,4 @@ if sys.stdout is None:  # pythonw: model-download progress bars need somewhere t
 
 from kalam.app import main
 
-main()
+sys.exit(main())
