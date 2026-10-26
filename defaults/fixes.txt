@@ -1,0 +1,19 @@
+# Fixes applied after every dictation:   wrong = right
+# Use it for words Whisper keeps writing in formal Arabic or misspelling.
+# Whole words only. Check history.txt to find new ones.
+يكذب = يكدب
+بيكذب = بيكدب
+تكذب = تكدب
+الثالثة = التالتة
+الثالث = التالت
+الثانية = التانية
+الثاني = التاني
+ثلاثة = تلاتة
+ثلاث = تلات
+ثمانية = تمانية
+بالضبط = بالظبط
+مضبوط = مظبوط
+مضبوطة = مظبوطة
+يجذب = يكدب
+بيجذب = بيكدب
+Open AI = OpenAI

@@ -1,0 +1,7 @@
+faster-whisper>=1.2
+sounddevice
+numpy
+keyboard
+pystray
+pillow
+pyperclip

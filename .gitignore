@@ -1,0 +1,4 @@
+.venv/
+my-settings/
+__pycache__/
+*.pyc

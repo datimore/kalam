@@ -1,0 +1,2 @@
+# Used when you dictate a sentence fully in English.
+This is dictated text for a document, with normal punctuation. I need to update the dashboard before the meeting.

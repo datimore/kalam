@@ -1,0 +1,21 @@
+# Hint words: English terms and names you say often, one per line.
+# They help Whisper spell them right and keep them in English letters.
+Notion
+Word
+Excel
+Power BI
+dashboard
+meeting
+report
+client
+email
+deadline
+data
+AI
+agent
+update
+feedback
+task
+LinkedIn
+YouTube
+Claude
