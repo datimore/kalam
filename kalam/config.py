@@ -30,6 +30,10 @@ DEFAULTS = {
     'use_context': True,         # feed the last sentence back so the style carries over
     'beam_size': 5,
     'max_seconds': 300,
+    'show_bubble': True,         # floating mic on top of every window
+    'bubble_x': None,
+    'bubble_y': None,
+    'bubble_dock': '',           # '' | left | right (tucked into that screen edge)
 }
 
 FILES = ['prompt_ar.txt', 'prompt_en.txt', 'words.txt', 'fixes.txt']

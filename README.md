@@ -29,11 +29,15 @@ Uninstall from **Settings → Apps → Kalam**.
 |---|---|
 | **Hold Right Ctrl**, speak, release | Text is inserted at the cursor ~1–2 s later |
 | **Ctrl+Alt+Space**, speak, **Ctrl+Alt+Space** again | Same, for longer dictation (no key to hold) |
+| Click the **floating mic** (the circle on top of every window) | Start; click again to stop. The text lands at your cursor |
 | Click the **mic button** in the Kalam window | Start / stop; the text goes to the clipboard, ready to paste |
 | **Esc** while it's listening | Cancel, nothing is inserted |
 
 - **The Kalam window** shows the status, your last dictation (with a Copy button), the model picker, Settings and History.
   Closing it (✕) keeps Kalam running in the tray, so the shortcut still works. Quit from the tray icon.
+- **The floating mic** stays on top of everything and never takes the cursor from your document. Drag it anywhere;
+  drag it to the left or right screen edge (or right-click → *Tuck into the edge*) and it hides half-way, sliding out
+  when you hover or while it's listening. Turn it off in Settings or the tray menu (*Floating mic*).
 - **A small pill** at the bottom of the screen shows *Listening* (red) and *Writing…* (amber).
   It never takes the cursor away from your document.
 - **The tray icon** (green mic) opens the window on click; right-click for settings, pause, start with Windows, quit.

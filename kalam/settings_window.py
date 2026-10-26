@@ -82,7 +82,8 @@ class SettingsDialog(QDialog):
         form.addRow('Insert text by', self.insert)
 
         self.checks = {}
-        for key, text in (('trailing_space', 'Add a space after each dictation'),
+        for key, text in (('show_bubble', 'Show the floating mic (click it to talk)'),
+                          ('trailing_space', 'Add a space after each dictation'),
                           ('use_context', 'Remember my last sentence (keeps the style consistent)'),
                           ('remove_fillers', 'Remove fillers like “umm” and “إممم”'),
                           ('keep_mic_open', 'Keep mic open so the first word is never cut')):

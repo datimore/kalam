@@ -18,6 +18,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from . import config, inserter
 from .audio import Recorder
+from .bubble import Bubble
 from .engine import Engine, model_cached, model_download_bytes
 from .icons import mic_icon
 from .main_window import MainWindow
@@ -88,6 +89,10 @@ class App:
         self.downloading = False
 
         self.overlay = Overlay()
+        self.bubble = Bubble(self.cfg['bubble_x'], self.cfg['bubble_y'], self.cfg['bubble_dock'])
+        self.bubble.clicked.connect(self.on_toggle)
+        self.bubble.menu_requested.connect(self._bubble_menu)
+        self.bubble.placed.connect(self._bubble_placed)
         self.win = MainWindow(self.cfg)
         self.win.mic_clicked.connect(self.on_toggle)
         self.win.model_chosen.connect(self.choose_model)
@@ -115,6 +120,9 @@ class App:
         m.addSeparator()
         self.pause_action = QAction('Pause', m, checkable=True, triggered=self.toggle_pause)
         m.addAction(self.pause_action)
+        self.bubble_action = QAction('Floating mic', m, checkable=True, checked=self.cfg['show_bubble'],
+                                     triggered=lambda on: self.apply_settings(dict(self.cfg, show_bubble=on)))
+        m.addAction(self.bubble_action)
         self.autostart_action = QAction('Start with Windows', m, checkable=True, checked=autostart_enabled(),
                                         triggered=set_autostart)
         m.addAction(self.autostart_action)
@@ -124,6 +132,22 @@ class App:
         self.tray.activated.connect(lambda r: self.win.show_front() if r in (
             QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick) else None)
         self.tray.show()
+
+    def _bubble_menu(self, at):
+        m = QMenu()
+        if self.bubble.dock:
+            m.addAction('Tucked into the edge (drag it out to free it)').setEnabled(False)
+        else:
+            m.addAction('Tuck into the edge', self.bubble.tuck)
+        m.addSeparator()
+        m.addAction('Open Kalam', self.win.show_front)
+        m.addAction('Settings…', self.open_settings)
+        m.addAction('Hide floating mic', lambda: self.apply_settings(dict(self.cfg, show_bubble=False)))
+        m.exec(at)
+
+    def _bubble_placed(self, x, y, dock):
+        self.cfg.update(bubble_x=x, bubble_y=y, bubble_dock=dock)
+        config.save(self.cfg)
 
     def _closed_to_tray(self):
         if not self.cfg.get('tray_tip_shown'):
@@ -152,6 +176,7 @@ class App:
         self.tray.setIcon(mic_icon(icon_state))
         self.tray.setToolTip(f'Kalam: {self._status_text()}')
         self.win.set_state(icon_state, self._status_text(), self.recorder.level)
+        self.bubble.set_state(icon_state, self.recorder.level)
 
     def toggle_pause(self, on):
         self.paused = on
@@ -215,6 +240,7 @@ class App:
         hint = '  (Esc cancels)' if self.mode == 'toggle' else ''
         self.overlay.show_msg(f'{self._status_text()}{hint}', 'listen', level=self.recorder.level)
         self.win.set_state('listen', self._status_text(), self.recorder.level)
+        self.bubble.set_state('listen', self.recorder.level)
         if secs > self.cfg['max_seconds']:
             self.finish()
 
@@ -334,6 +360,7 @@ class App:
         config.save(self.cfg)
         self.register_hotkeys()
         self.win.refresh_hint()
+        self._show_bubble()
         try:
             self.recorder.apply_settings()
         except Exception:  # noqa: BLE001
@@ -357,6 +384,7 @@ class App:
         self.jobs.put(('quit', None))
         keyboard.unhook_all()
         self.tray.hide()
+        self.bubble.hide()
         self.win.quitting = True
         self.qapp.quit()
 
@@ -369,7 +397,16 @@ class App:
         except Exception:  # noqa: BLE001
             logging.exception('mic')
         self.pump.start()
+        self._show_bubble()
         return self.qapp.exec()
+
+    def _show_bubble(self):
+        self.bubble_action.setChecked(self.cfg['show_bubble'])
+        if self.cfg['show_bubble'] and not self.bubble.isVisible():
+            self.bubble.start()
+            self.bubble.set_state(self.state)
+        elif not self.cfg['show_bubble']:
+            self.bubble.hide()
 
 
 def transcribe_file(path):
