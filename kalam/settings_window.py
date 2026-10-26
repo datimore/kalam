@@ -84,7 +84,8 @@ class SettingsDialog(QDialog):
         self.checks = {}
         for key, text in (('show_bubble', 'Show the floating mic (click it to talk)'),
                           ('trailing_space', 'Add a space after each dictation'),
-                          ('use_context', 'Remember my last sentence (keeps the style consistent)'),
+                          ('use_hint_words', 'Use my hint words (helps spelling, but can make it skip words)'),
+                          ('use_context', 'Feed my last sentence back as context (can make mistakes repeat)'),
                           ('remove_fillers', 'Remove fillers like “umm” and “إممم”'),
                           ('keep_mic_open', 'Keep mic open so the first word is never cut')):
             cb = QCheckBox(text)

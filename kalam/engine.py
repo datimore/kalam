@@ -132,7 +132,7 @@ class Engine:
         prompt = config.read_text('prompt_ar.txt' if lang == 'ar' else 'prompt_en.txt')
         if self.cfg['use_context'] and self.last_text and self.last_lang == lang and time.time() - self.last_time < 600:
             prompt = f'{prompt} {self.last_text[-200:]}'
-        hotwords = ' '.join(config.read_lines('words.txt')) or None
+        hotwords = (' '.join(config.read_lines('words.txt')) or None) if self.cfg['use_hint_words'] else None
 
         # a short clip can't hold more than ~12 tokens/s; the cap stops repetition loops early
         cap = min(220, int(12 * secs) + 30) if secs < 18 else None

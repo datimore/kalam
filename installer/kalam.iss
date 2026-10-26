@@ -2,7 +2,7 @@
 ; Build:  "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" installer\kalam.iss   (after pyinstaller kalam.spec)
 
 #define AppName "Kalam"
-#define AppVersion "1.1.0"
+#define AppVersion "1.2.0"
 #define AppExe "Kalam.exe"
 
 [Setup]

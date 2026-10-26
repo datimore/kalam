@@ -1,4 +1,5 @@
 """Settings and the user's editable text files (prompt, hint words, fixes)."""
+import hashlib
 import json
 import os
 import shutil
@@ -27,7 +28,8 @@ DEFAULTS = {
     'remove_fillers': False,
     'keep_mic_open': False,      # True keeps a 0.4 s pre-roll so the first word is never cut
     'mic_device': '',            # '' = Windows default
-    'use_context': True,         # feed the last sentence back so the style carries over
+    'use_hint_words': False,     # words.txt as Whisper hotwords (off: made it skip speech and echo the prompt)
+    'use_context': False,        # feed the last sentence back (off: one wrong sentence made the next ones drift)
     'beam_size': 5,
     'max_seconds': 300,
     'show_bubble': True,         # floating mic on top of every window
@@ -37,6 +39,9 @@ DEFAULTS = {
 }
 
 FILES = ['prompt_ar.txt', 'prompt_en.txt', 'words.txt', 'fixes.txt']
+SETTINGS_VERSION = 2
+# the long prompt shipped before 1.2.0: Whisper reused its words («الـ data», «طبعاً») and skipped speech
+OLD_DEFAULT_PROMPTS = {'05b84ee60a0e77f915c78ce6298cd50f143f02180ebde030e2b3af3dee211d4f'}
 
 
 def ensure_data_dir():
@@ -45,6 +50,11 @@ def ensure_data_dir():
         dst = DATA_DIR / name
         if not dst.exists():
             shutil.copy(DEFAULTS_DIR / name, dst)
+    # upgrade the prompt only if the user never edited it
+    prompt = DATA_DIR / 'prompt_ar.txt'
+    digest = hashlib.sha256(prompt.read_text(encoding='utf-8-sig').strip().encode()).hexdigest()
+    if digest in OLD_DEFAULT_PROMPTS:
+        shutil.copy(DEFAULTS_DIR / 'prompt_ar.txt', prompt)
 
 
 def load():
@@ -56,6 +66,9 @@ def load():
             cfg.update(json.loads(path.read_text(encoding='utf-8')))
         except (ValueError, OSError):
             pass
+        if cfg.get('settings_version', 1) < 2:
+            cfg['use_context'] = False  # the old default caused drift; users can turn it back on
+    cfg['settings_version'] = SETTINGS_VERSION
     return cfg
 
 

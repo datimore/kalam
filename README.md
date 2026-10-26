@@ -49,12 +49,14 @@ Generic dictation tools turn Egyptian Arabic into formal Arabic, or write Englis
 
 1. **[faster-whisper](https://github.com/SYSTRAN/faster-whisper)** running OpenAI's Whisper **large-v3** locally (GPU if you have one).
 2. **Language forced to Arabic**, so a sentence full of English words isn't switched to English.
-3. **A prompt written in Egyptian dialect, with English words in English letters.** Whisper copies the style
-   of its prompt. This is the biggest single difference.
-4. **Your hint words** (Power BI, Notion, client names…) so they're spelled right.
-5. **Your last sentence** fed back in, so the style stays consistent between presses.
-6. **A fix list** applied after every dictation (يكذب → يكدب, الثالثة → التالتة…).
-7. **Smart language**: if you dictate a sentence fully in English, it's detected and written in English.
+3. **A one-line prompt in Egyptian dialect, with English words in English letters**
+   («كلام بالمصري، والكلمات الـ English بتتكتب English.»). Whisper copies the style of its prompt.
+   Without it, English words get written in Arabic letters or dropped; a *long* prompt is worse:
+   Whisper starts reusing its words and skipping parts of what you said.
+4. Hint words and feeding your last sentence back are **off by default**: in testing, hint words made Whisper skip
+   speech, and the last-sentence context made one mistake repeat in the next dictation. Both can be turned on in Settings.
+5. **A fix list** applied after every dictation (يكذب → يكدب, الثالثة → التالتة…).
+6. **Smart language**: if you dictate a sentence fully in English, it's detected and written in English.
 
 Safety nets for Whisper's known quirks: silence and very short presses are ignored, YouTube-style phrases
 it invents on silence ("اشتركوا في القناة") are dropped, and repetition loops are cut.
@@ -66,8 +68,8 @@ Settings → the buttons at the bottom, or the tray menu. The files live in `%AP
 
 | File | What to put there |
 |---|---|
-| `prompt_ar.txt` | 3–4 sentences that sound like **you**: your dialect, your English terms. |
-| `words.txt` | English terms and names you say often, one per line. |
+| `prompt_ar.txt` | One short line describing how you talk. Keep it short: real sentences get copied into your text. |
+| `words.txt` | English terms and names you say often (only used if *Use my hint words* is on; keep it short). |
 | `fixes.txt` | `wrong = right`, one per line, for words it keeps getting wrong. |
 | `history.txt` | Everything you dictated, the easiest place to spot new fixes. |
 

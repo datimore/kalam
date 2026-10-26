@@ -1,5 +1,6 @@
 # Hint words: English terms and names you say often, one per line.
-# They help Whisper spell them right and keep them in English letters.
+# Only used when Settings > "Use my hint words" is on. Keep the list short:
+# in testing, a long list made Whisper skip parts of what was said.
 Notion
 Word
 Excel

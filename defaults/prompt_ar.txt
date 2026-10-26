@@ -1,6 +1,4 @@
-# The style Whisper copies. Keep it in YOUR Egyptian Arabic, with English words written in English.
-# Lines starting with # are ignored. Edit freely; changes apply on the next dictation.
-ده كلام بالعامية المصرية وفيه كلمات English زي ما بنتكلم بالظبط.
-أنا محتاج أعمل update للـ dashboard قبل الـ meeting بكره، وهبعت الـ report للـ client على الـ email.
-مش عارف إزاي ده حصل، بس اللي فهمته إن الـ data مش مظبوطة في الـ Power BI.
-لو عايز تعدّل حاجة في الـ Notion page قولّي، عشان الـ deadline قرّب. كده تمام، يلا نبدأ.
+# The style Whisper copies. Keep it SHORT: it should describe how you talk, not contain topics.
+# Longer prompts with real sentences make Whisper reuse their words or skip parts of what you said.
+# Lines starting with # are ignored. Changes apply on the next dictation.
+كلام بالمصري، والكلمات الـ English بتتكتب English.
