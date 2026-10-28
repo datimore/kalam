@@ -2,6 +2,7 @@
 
 Whatever the look, a ring around it shows the state (green ready, red listening, amber writing, grey paused).
 """
+import math
 import shutil
 from pathlib import Path
 
@@ -72,6 +73,8 @@ class Skin(QObject):
             if state == 'work':
                 self._spinner(p, rect.adjusted(r * 0.2, r * 0.2, -r * 0.2, -r * 0.2), angle, QColor('white'), r * 0.09)
             draw_mic(p, cx, cy, rect.width() * 0.46)
+            if state == 'meeting':
+                self._rec_dot(p, rect, angle)
             p.restore()
             return
         # picture looks: the picture fills the circle, a ring shows the state
@@ -103,7 +106,20 @@ class Skin(QObject):
         p.drawEllipse(rect.adjusted(ring / 2, ring / 2, -ring / 2, -ring / 2))
         if state == 'work':
             self._spinner(p, rect.adjusted(ring / 2, ring / 2, -ring / 2, -ring / 2), angle, QColor('white'), ring * 0.55)
+        if state == 'meeting':
+            self._rec_dot(p, rect, angle)
         p.restore()
+
+    @staticmethod
+    def _rec_dot(p, rect, angle):
+        """Pulsing red dot: meeting mode is recording."""
+        d = rect.width() * 0.26
+        dot = QRectF(rect.right() - d * 0.95, rect.top() + d * 0.05, d, d)
+        red = QColor('#E5484D')
+        red.setAlphaF(0.55 + 0.45 * abs(math.sin(math.radians(angle * 1.5))))
+        p.setPen(QPen(QColor('white'), max(1.5, d * 0.14)))
+        p.setBrush(red)
+        p.drawEllipse(dot)
 
     @staticmethod
     def _spinner(p, rect, angle, color, width):

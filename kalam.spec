@@ -10,8 +10,10 @@ cublas = [(f, 'nvidia/cublas/bin') for f in glob.glob(os.path.join(site, 'nvidia
 a = Analysis(
     ['kalam.pyw'],
     pathex=['.'],
-    binaries=cublas + collect_dynamic_libs('ctranslate2'),
-    datas=[('defaults', 'defaults'), ('assets', 'assets')] + collect_data_files('faster_whisper'),
+    binaries=cublas + collect_dynamic_libs('ctranslate2') + collect_dynamic_libs('sherpa_onnx'),
+    # models/ = the two speaker models for meeting mode (tools/get_models.py downloads them)
+    datas=[('defaults', 'defaults'), ('assets', 'assets'), ('models', 'models')] + collect_data_files('faster_whisper')
+          + collect_data_files('soundcard') + collect_data_files('sherpa_onnx'),
     hiddenimports=['PySide6.QtNetwork'],
     excludes=['tkinter', 'pystray', 'matplotlib', 'IPython', 'pytest', 'torch'],
 )

@@ -4,3 +4,5 @@ numpy
 keyboard
 pyperclip
 pyside6-essentials>=6.7
+soundcard
+sherpa-onnx

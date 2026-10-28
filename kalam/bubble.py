@@ -33,7 +33,7 @@ class Bubble(QWidget):
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setCursor(Qt.PointingHandCursor)
         self.setToolTip('Click to talk, click again to stop\nDrag to move · drag to the screen edge to tuck it away\n'
-                        'Right-click for options')
+                        'Right-click for meeting mode and options')
         self.skin = Skin(skin, self)
         self.skin.changed.connect(self.update)
         self.set_size(diameter)
@@ -124,7 +124,7 @@ class Bubble(QWidget):
     # ── state ────────────────────────────────────────────────────────────────
     def set_state(self, state, level=0.0):
         self.state, self.level = state, level
-        if state == 'work':
+        if state in ('work', 'meeting'):  # spinner while writing, pulsing dot during a meeting
             self.spinner.start()
         else:
             self.spinner.stop()

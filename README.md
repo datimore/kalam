@@ -34,9 +34,9 @@ Uninstall from **Settings → Apps → Kalam**.
 | Click the big mic in the Kalam window | Start / stop; the text goes to the clipboard, ready to paste |
 | **Esc** while it's listening | Cancel the rest |
 
-- **Live caption**: while you talk, a caption at the bottom of the screen shows what Kalam hears, word by word.
-  What lands in your document is the final, careful version of each sentence; nothing is ever deleted or
-  rewritten in your document. Turn live mode off, or make it wait longer before a sentence ends, in Settings > General.
+- **Nothing else on screen**: the floating mic's ring shows what Kalam is doing. If you like, turn on a live caption
+  (what Kalam hears, word by word) or a status strip in Settings > General. What lands in your document is the final,
+  careful version of each sentence; nothing in your document is ever deleted or rewritten.
 - **The floating mic** stays on top of everything and never takes the cursor from your document. Drag it anywhere;
   drop it on the left or right screen edge (or right-click > *Tuck into the edge*) to tuck it half-way in. It slides
   out when you hover and while it's listening.
@@ -65,6 +65,30 @@ Generic dictation tools turn Egyptian Arabic into formal Arabic, or write Englis
 
 Safety nets for Whisper's known quirks: silence and very short presses are ignored, YouTube-style phrases
 it invents on silence ("اشتركوا في القناة") are dropped, and repetition loops are cut.
+
+## Meeting mode
+
+Kalam writes down a whole meeting: who said what, in Arabic and English, as a Markdown file.
+
+- **Start**: right-click the floating mic > *Start meeting mode*, or press **Ctrl+Alt+M**. The floating mic turns
+  violet with a red recording dot; nothing else appears on screen.
+- **Stop**: click the floating mic (or press Ctrl+Alt+M again). The transcript is ready a few seconds later, in
+  `Documents\Kalam Meetings`, and a notification opens it.
+- **Who said what**: Kalam records your microphone and your computer's sound separately, so in Zoom, Teams or Meet it
+  knows exactly what *you* said; everyone else is told apart by voice (*Speaker 1, Speaker 2…*; switch it off in
+  Settings > Meetings). No headphones? The echo of the others in your mic is removed.
+- **One room, one mic**: record your voice once (Settings > Meetings > *Record my voice*, 20 seconds) and Kalam
+  finds you among the speakers.
+- **Rename speakers** and **Copy for AI** in Settings > Meetings: the copy includes a prompt, so ChatGPT, Claude or
+  Gemini returns a summary, decisions and action items.
+
+```
+**[00:03:12] Mohamed:** محتاجين نخلّص الـ dashboard قبل الخميس
+**[00:03:20] Sarah:** Sure, I'll send the data today.
+```
+
+Let people know you are recording. Speaker separation is good but not perfect: similar voices or people talking
+over each other can get mixed up.
 
 ## Teach Kalam your words (no files to edit)
 
@@ -103,6 +127,7 @@ Everything applies instantly.
 - **General**: live mode and how long a pause ends a sentence (Quick / Normal / Relaxed), language, microphone,
   filler removal, start with Windows.
 - **Floating mic**: show / hide, size, look (built-in or your own picture / GIF).
+- **Meetings**: telling speakers apart, your name, your voice, keeping the recordings, and your meeting transcripts.
 - **Teach Kalam** and **History**: see above.
 - **Shortcuts**: click *Set…* and press the keys. Avoid Alt+Shift (Windows language switch).
 - **Advanced**: Whisper model, GPU / CPU, paste vs type, keep the mic open (never cuts your first word),
@@ -117,6 +142,8 @@ Everything applies instantly.
 - **Slow**: the bottom of the Kalam window says `GPU` or `CPU`. On CPU, pick large-v3-turbo.
 - **Copied an image right before dictating**: paste mode can only restore copied *text*.
 - **Check the whole pipeline without a mic**: `Kalam.exe --transcribe voice.wav` writes the result to `kalam.log`.
+- **Check meeting mode**: `Kalam.exe --check-meeting` records 5 seconds of your mic and computer sound, runs the
+  meeting pipeline and logs the result.
 - Logs: `%APPDATA%\Kalam\kalam.log`. Downloaded models: `%USERPROFILE%\.cache\huggingface\hub`
   (not removed on uninstall; delete the `models--Systran--faster-whisper-*` folders to free the space).
 
@@ -136,6 +163,8 @@ kalam/main_window.py     the mini window (Qt)
 kalam/settings_window.py the settings window (General, Floating mic, Teach, History, Shortcuts, Advanced)
 kalam/bubble.py          the floating mic; kalam/skins.py its looks (mic, emoji, picture, GIF)
 kalam/learn.py           fixes: learn from corrections, AI prompt, read the AI's answer
+kalam/meeting.py         meeting mode: two-track capture, transcription, echo removal, Markdown, rename, AI prompt
+kalam/speakers.py        speaker separation and your voice (sherpa-onnx, models/ via tools/get_models.py)
 kalam/overlay.py         status pill + live caption (never takes focus)
 kalam/theme.py           light / dark design tokens and stylesheet
 kalam.spec               PyInstaller recipe (ships only cuBLAS from the NVIDIA libraries)
@@ -143,9 +172,12 @@ installer/kalam.iss      Inno Setup script (per-user install, no admin)
 tools/try_file.py        run the engine on clips of a WAV:  python tools/try_file.py voice.wav 0:6 12:8
 tools/e2e.py             end-to-end: real hotkeys + paste, with a WAV in place of the mic
 tools/live_sim.py        live mode end to end: real sentences + pauses streamed in real time
+tools/meeting_sim.py     meeting mode end to end: an online or one-room meeting streamed in real time
 ```
 
 ## License
 
-MIT. Built on [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (MIT) and
-[OpenAI Whisper](https://github.com/openai/whisper) (MIT).
+MIT. Built on [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (MIT),
+[OpenAI Whisper](https://github.com/openai/whisper) (MIT), [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)
+(Apache 2.0) with pyannote segmentation (MIT) and 3D-Speaker ERes2Net (Apache 2.0) models, and
+[SoundCard](https://github.com/bastibe/SoundCard) (BSD).

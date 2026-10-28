@@ -20,7 +20,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from . import config, inserter, learn, system, theme
+from . import config, inserter, learn, meeting, speakers, system, theme
 from .audio import SR, Recorder
 from .bubble import Bubble
 from .engine import Engine, model_cached, model_download_bytes
@@ -114,6 +114,9 @@ class App:
         self.rec_started = 0.0
         self.downloading = False
         self.last_target = 0        # the last non-Kalam window that had focus
+        self.meeting = None         # the meeting being recorded
+        self.meeting_latched = False
+        self.last_meeting = None    # path of the transcript just saved (the tray message opens it)
 
         self.overlay = Overlay()
         self.bubble = Bubble(self.cfg['bubble_x'], self.cfg['bubble_y'], self.cfg['bubble_dock'],
@@ -127,6 +130,7 @@ class App:
         self.win.settings_clicked.connect(lambda: self.open_settings('General'))
         self.win.teach_clicked.connect(lambda: self.open_settings('Teach Kalam'))
         self.win.history_clicked.connect(lambda: self.open_settings('History'))
+        self.win.meetings_clicked.connect(lambda: self.open_settings('Meetings'))
         self.win.learn_requested.connect(self._learn_from_window)
         self.win.closed_to_tray.connect(self._closed_to_tray)
         self._tray()
@@ -134,6 +138,7 @@ class App:
         self.ticker = QTimer(timeout=self._tick, interval=80)
         self.dl_timer = QTimer(timeout=self._download_progress, interval=1000)
         self.focus_watch = QTimer(timeout=self._track_focus, interval=250)
+        self.meeting_timer = QTimer(timeout=self._meeting_tick, interval=500)
         QApplication.styleHints().colorSchemeChanged.connect(self._retheme)
         if not start_hidden:
             self.win.show_front()
@@ -147,6 +152,7 @@ class App:
         m.addAction('Teach Kalam…', lambda: self.open_settings('Teach Kalam'))
         m.addAction('History…', lambda: self.open_settings('History'))
         m.addSeparator()
+        self.meeting_action = m.addAction('Start meeting mode', self.toggle_meeting)
         self.pause_action = QAction('Pause', m, checkable=True, triggered=self.toggle_pause)
         m.addAction(self.pause_action)
         self.bubble_action = QAction('Floating mic', m, checkable=True, checked=self.cfg['show_bubble'],
@@ -161,10 +167,16 @@ class App:
         self.tray.setContextMenu(m)
         self.tray.activated.connect(lambda r: self.win.show_front() if r in (
             QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick) else None)
+        self.tray.messageClicked.connect(lambda: os.startfile(self.last_meeting) if self.last_meeting else None)
         self.tray.show()
 
     def _bubble_menu(self, at):
         m = QMenu()
+        if self.meeting:
+            m.addAction('Stop the meeting and save it', self.stop_meeting)
+        else:
+            m.addAction('Start meeting mode', self.start_meeting)
+        m.addSeparator()
         if self.bubble.dock:
             m.addAction('Tucked into the edge (drag it out to free it)').setEnabled(False)
         else:
@@ -187,6 +199,17 @@ class App:
                                   + ' to dictate. Right-click the tray icon to quit.', mic_icon('ready'), 5000)
             self.cfg['tray_tip_shown'] = True
             config.save(self.cfg)
+
+    def _say(self, text, kind='info', secs=None, level=None, caption=None, important=False):
+        """On-screen strip. Off by default (the floating mic's ring shows the state); errors and
+        'copied to clipboard' always show, because there is no other way to know."""
+        important = important or kind == 'error'
+        if caption is not None and not self.cfg['show_caption']:
+            caption = None
+        if important or caption or self.cfg['show_status'] or (self.mode is None and not self.cfg['show_bubble']):
+            self.overlay.show_msg(text, kind, secs, level=level, caption=caption)
+        elif self.overlay.isVisible():
+            self.overlay.hide()
 
     def _track_focus(self):
         hwnd = user32.GetForegroundWindow()
@@ -221,7 +244,11 @@ class App:
             secs = int(time.time() - self.rec_started)
             return f'Listening {secs // 60}:{secs % 60:02d}'
         if s == 'work':
-            return 'Writing…'
+            return 'Saving the meeting…' if self.meeting else 'Writing…'
+        if s == 'meeting' and self.meeting:
+            secs = int(self.meeting.elapsed())
+            return f'Meeting · {secs // 3600}:{secs % 3600 // 60:02d}:{secs % 60:02d}' if secs >= 3600 else \
+                f'Meeting · {secs // 60}:{secs % 60:02d}'
         return 'Paused' if self.paused else 'Ready'
 
     def set_state(self, state):
@@ -241,17 +268,24 @@ class App:
         keyboard.unhook_all()
         self.pressed.clear()
         keyboard.hook(self._on_key)
-        tog = self.cfg['toggle_key'].strip()
-        if tog:
-            # swallow the toggle combo so it does nothing in the focused app
-            keyboard.add_hotkey(tog, lambda: None, suppress=True, trigger_on_release=False)
+        for combo in (self.cfg['toggle_key'].strip(), self.cfg['meeting_key'].strip()):
+            if combo:
+                # swallow the combo so it does nothing in the focused app
+                keyboard.add_hotkey(combo, lambda: None, suppress=True, trigger_on_release=False)
 
     def _on_key(self, e):
         name = (e.name or '').lower()
         hold = [k.strip() for k in self.cfg['hold_key'].lower().split('+') if k.strip()]
         tog = [k.strip() for k in self.cfg['toggle_key'].lower().split('+') if k.strip()]
+        meet = [k.strip() for k in self.cfg['meeting_key'].lower().split('+') if k.strip()]
         if e.event_type == 'down':
             self.pressed.add(name)
+            all_down = lambda keys: keys and all(any(_key_matches(k, p) for p in self.pressed) for k in keys)
+            if meet and all_down(meet) and any(_key_matches(k, name) for k in meet):
+                if not self.meeting_latched:
+                    self.meeting_latched = True
+                    self.ui.put(self.toggle_meeting)
+                return
             if name == 'esc' and self.mode:
                 self.ui.put(self.cancel)
                 return
@@ -266,21 +300,23 @@ class App:
             self.pressed.discard(name)
             if any(_key_matches(k, name) for k in tog):
                 self.toggle_latched = False
+            if any(_key_matches(k, name) for k in meet):
+                self.meeting_latched = False
             if self.mode == 'hold' and any(_key_matches(k, name) for k in hold):
                 self.ui.put(self.finish)
 
     # ── recording (Qt thread) ────────────────────────────────────────────────
     def start(self, mode):
-        if self.mode or self.paused:
+        if self.mode or self.paused or self.meeting:
             return
         if self.state not in ('ready', 'work'):  # recording while the last clip is still being written is fine
-            self.overlay.show_msg('Still loading the model…' if self.state == 'loading' else 'Model not loaded', 'info', 1.5)
+            self._say('Still loading the model…' if self.state == 'loading' else 'Model not loaded', 'info', 1.5, important=True)
             return
         try:
             self.recorder.start()
         except Exception:  # noqa: BLE001
             logging.exception('mic')
-            self.overlay.show_msg('Microphone error', 'error', 3)
+            self._say('Microphone error', 'error', 3)
             return
         self.sid += 1
         self.session = Session(self.sid, mode, self.cfg['live_mode'])
@@ -303,14 +339,16 @@ class App:
             hint = '  ·  Esc cancels' if self.mode == 'toggle' else ''
         show = s and s.live and self.cfg['show_caption']
         caption = ' '.join(s.texts + ([s.preview] if s.preview else [])) if show else None
-        self.overlay.show_msg(f'{self._status_text()}{hint}', 'listen', level=self.recorder.level, caption=caption)
+        self._say(f'{self._status_text()}{hint}', 'listen', level=self.recorder.level, caption=caption)
         self.win.set_state('listen', self._status_text(), self.recorder.level)
         self.bubble.set_state('listen', self.recorder.level)
         if secs > self.cfg['max_seconds']:
             self.finish()
 
     def on_toggle(self):
-        if self.mode == 'toggle':
+        if self.meeting:
+            self.stop_meeting()
+        elif self.mode == 'toggle':
             self.finish()
         elif self.mode is None:
             self.start('toggle')
@@ -327,10 +365,10 @@ class App:
                 s.stopped = True
                 start16 = int(s.commit_raw * SR / self.recorder.rate)
             caption = ' '.join(s.texts + ([s.preview] if s.preview else [])) if self.cfg['show_caption'] else ''
-            self.overlay.show_msg('Writing…', 'work', caption=caption or None)
+            self._say('Writing…', 'work', caption=caption or None)
             self.jobs.put(('sentence', (s, audio[start16:], True)))
         else:
-            self.overlay.show_msg('Writing…', 'work')
+            self._say('Writing…', 'work')
             self.jobs.put(('audio', (s, audio)))
 
     def cancel(self):
@@ -343,7 +381,75 @@ class App:
         self.recorder.stop()
         self.set_state('ready')
         self.overlay.clear_caption()
-        self.overlay.show_msg('Cancelled', 'info', 1.0)
+        self._say('Cancelled', 'info', 1.0)
+
+    # ── meeting mode ─────────────────────────────────────────────────────────
+    def toggle_meeting(self):
+        self.stop_meeting() if self.meeting else self.start_meeting()
+
+    def start_meeting(self):
+        if self.meeting:
+            return
+        if self.state not in ('ready', 'work') or not self.engine.model:
+            self._say('Still loading the model…', 'info', 2, important=True)
+            return
+        if self.mode:
+            self.finish()
+        m = meeting.Meeting(self.cfg, lambda mt, track, offset, audio: self.jobs.put(('meeting_piece', (mt, track, offset, audio))))
+        try:
+            m.start()
+        except Exception:  # noqa: BLE001
+            logging.exception('meeting start')
+            self._say('Could not start meeting mode', 'error', 3)
+            return
+        self.meeting = m
+        self.meeting_action.setText('Stop the meeting and save it')
+        self.set_state('meeting')
+        self.meeting_timer.start()
+        logging.info('meeting started')
+
+    def _meeting_tick(self):
+        if not self.meeting or self.state != 'meeting':
+            self.meeting_timer.stop()
+            return
+        if self.meeting.errors:
+            logging.warning('meeting capture problems: %s', self.meeting.errors)
+        self.win.set_state('meeting', self._status_text(), self.meeting.level)
+        self.tray.setToolTip(f'Kalam: {self._status_text()}')
+
+    def stop_meeting(self):
+        m = self.meeting
+        if not m or m.ended:
+            return
+        self.meeting_timer.stop()
+        self.set_state('work')
+        threading.Thread(target=lambda: (m.stop(), self.jobs.put(('meeting_done', m))), daemon=True).start()
+
+    def _meeting_piece(self, m, track, offset, audio):
+        _, info = self.engine.transcribe(audio, with_segments=True)
+        m.add(track, offset, info.get('segments', []))
+
+    def _meeting_done(self, m):
+        try:
+            path, people = m.build()
+            logging.info('meeting saved: %s (%s)', path, people)
+            mins = max(1, round(m.elapsed() / 60))
+            self.ui.put(lambda: self._meeting_saved(path, mins, people))
+        except Exception:  # noqa: BLE001
+            logging.exception('meeting build')
+            self.ui.put(lambda: self._meeting_saved(None, 0, []))
+
+    def _meeting_saved(self, path, mins, people):
+        self.meeting = None
+        self.meeting_action.setText('Start meeting mode')
+        self.set_state('ready')
+        if path:
+            self.last_meeting = str(path)
+            n = len(people)
+            self.tray.showMessage('Meeting saved', f'{mins} min · {n} {"person" if n == 1 else "people"} · '
+                                  'click to open the transcript', mic_icon('ready'), 6000)
+        else:
+            self._say('Could not save the meeting, see kalam.log', 'error', 5)
 
     # ── live mode: cut sentences at pauses (watcher thread) ──────────────────
     def _watch(self, s):
@@ -401,11 +507,16 @@ class App:
             try:
                 if kind == 'sentence':
                     self._sentence(*payload)
+                elif kind == 'meeting_piece':
+                    self._meeting_piece(*payload)
+                elif kind == 'meeting_done':
+                    self._meeting_done(payload)
                 else:
                     self._one_shot(*payload)
             except Exception:  # noqa: BLE001
                 logging.exception('transcribe')
-                self.ui.put(lambda: self._done('Error, see kalam.log', 'error', 3))
+                if kind != 'meeting_piece':
+                    self.ui.put(lambda: self._done('Error, see kalam.log', 'error', 3))
 
     def _preview(self, s, audio):
         try:
@@ -474,7 +585,7 @@ class App:
         self.win.set_footer(f'{name} · {where}')
         self.win.set_chip(f'●  {where}')
         if not self.win.isVisible():
-            self.overlay.show_msg('Kalam is ready', 'ok', 2.5)
+            self._say('Kalam is ready', 'ok', 2.5)
 
     def _load_failed(self):
         self.downloading = False
@@ -482,7 +593,7 @@ class App:
         self.set_state('error')
         self.win.set_footer('see kalam.log (Settings → Advanced)')
         self.win.set_chip('Error')
-        self.overlay.show_msg('Model failed to load', 'error', 6)
+        self._say('Model failed to load', 'error', 6)
 
     def _download_progress(self):
         if self.state != 'loading':
@@ -498,7 +609,7 @@ class App:
         self.overlay.clear_caption()
         self.set_state('ready' if self.jobs.empty() else 'work')
         if msg:
-            self.overlay.show_msg(msg, kind, secs)
+            self._say(msg, kind, secs, important=msg.startswith('Copied'))
         elif self.jobs.empty():
             self.overlay.hide()
 
@@ -532,7 +643,7 @@ class App:
         reload = any(new[k] != self.cfg[k] for k in RELOAD_KEYS)
         self.cfg.update(new)  # engine and recorder share this dict
         config.save(self.cfg)
-        if (new['hold_key'], new['toggle_key']) != (old['hold_key'], old['toggle_key']):
+        if (new['hold_key'], new['toggle_key'], new['meeting_key']) != (old['hold_key'], old['toggle_key'], old['meeting_key']):
             self.register_hotkeys()
         if new['bubble_skin'] != old['bubble_skin']:
             self.bubble.set_skin(new['bubble_skin'])
@@ -546,7 +657,7 @@ class App:
                 self.recorder.apply_settings()
             except Exception:  # noqa: BLE001
                 logging.exception('mic')
-                self.overlay.show_msg('Microphone error', 'error', 3)
+                self._say('Microphone error', 'error', 3)
         if reload:
             self.jobs.put(('load', None))
         else:
@@ -562,6 +673,10 @@ class App:
             fn()
 
     def quit(self):
+        if self.meeting and not self.meeting.ended:
+            m = self.meeting
+            m.stop()
+            self._meeting_done(m)
         self.jobs.put(('quit', None))
         keyboard.unhook_all()
         self.tray.hide()
@@ -608,12 +723,36 @@ def transcribe_file(path):
     return 0
 
 
+def check_meeting(secs=5):
+    """Kalam.exe --check-meeting: records a few seconds of mic + computer sound, runs the whole meeting pipeline
+    (speaker separation included) and logs the result. The test transcript is deleted afterwards."""
+    cfg = dict(config.load(), meeting_speakers=True)
+    engine = Engine(cfg)
+    logging.info('check-meeting: model on %s, speaker models present: %s', engine.load(), speakers.available())
+    m = meeting.Meeting(cfg, lambda mt, track, offset, audio: mt.add(
+        track, offset, engine.transcribe(audio, with_segments=True)[1].get('segments', [])))
+    m.start()
+    time.sleep(secs)
+    m.stop()
+    logging.info('check-meeting: recorded you %.1f s, computer %.1f s, errors %s',
+                 m.tracks['me'].total / SR, m.tracks['others'].total / SR, m.errors)
+    if speakers.available():
+        turns = speakers.diarize(m.tracks['me'].all())
+        logging.info('check-meeting: speaker separation ran (%d turns)', len(turns))
+    path, people = m.build()
+    logging.info('check-meeting: transcript written (%s), OK', people)
+    path.unlink()
+    return 0 if not m.errors else 1
+
+
 def main():
     config.ensure_data_dir()
     logging.basicConfig(filename=config.DATA_DIR / 'kalam.log', level=logging.INFO, encoding='utf-8',
                         format='%(asctime)s %(levelname)s %(message)s')
     if len(sys.argv) > 2 and sys.argv[1] == '--transcribe':
         return transcribe_file(sys.argv[2])
+    if len(sys.argv) > 1 and sys.argv[1] == '--check-meeting':
+        return check_meeting()
     qapp = QApplication(sys.argv)
     qapp.setApplicationName('Kalam')
     qapp.setQuitOnLastWindowClosed(False)  # closing the window keeps Kalam in the tray

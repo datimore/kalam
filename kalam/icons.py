@@ -4,7 +4,7 @@ from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 
 STATE_COLORS = {
     'loading': '#8B8D98', 'ready': '#30A46C', 'listen': '#E5484D',
-    'work': '#F5A524', 'paused': '#8B8D98', 'error': '#E5484D',
+    'work': '#F5A524', 'paused': '#8B8D98', 'error': '#E5484D', 'meeting': '#7C5CFF',
 }
 
 

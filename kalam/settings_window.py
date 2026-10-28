@@ -6,13 +6,14 @@ import os
 import threading
 
 import keyboard
-from PySide6.QtCore import QObject, QSize, Qt, Signal
+from PySide6.QtCore import QObject, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QFont, QGuiApplication, QIcon
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog, QFileDialog, QGridLayout, QHBoxLayout,
-                               QHeaderView, QLineEdit, QListWidget, QListWidgetItem, QPlainTextEdit, QPushButton,
-                               QScrollArea, QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
+                               QHeaderView, QLineEdit, QListWidget, QListWidgetItem, QPlainTextEdit, QProgressBar,
+                               QPushButton, QScrollArea, QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout,
+                               QWidget)
 
-from . import audio, config, learn, skins, system, theme
+from . import audio, config, learn, meeting, skins, speakers, system, theme
 from .bubble import SIZES
 from .widgets import Segmented, Toggle, button, card, label, row
 
@@ -23,7 +24,7 @@ LANGS = {
 }
 PAUSES = [('Quick', 0.6), ('Normal', 1.0), ('Relaxed', 1.5)]
 DEFAULT_MIC = 'Windows default'
-PAGES = ['General', 'Floating mic', 'Teach Kalam', 'History', 'Shortcuts', 'Advanced']
+PAGES = ['General', 'Floating mic', 'Meetings', 'Teach Kalam', 'History', 'Shortcuts', 'Advanced']
 PROMPT_HEADER = ('# The style Whisper copies. Keep it SHORT: it should describe how you talk, not contain topics.\n'
                  '# Longer prompts with real sentences make Whisper reuse their words or skip parts of what you said.\n')
 DEFAULT_PROMPT = 'كلام بالمصري، والكلمات الـ English بتتكتب English.'
@@ -101,6 +102,105 @@ def confirm_and_learn(pairs, parent):
     return learn.add_fixes(dlg.chosen())
 
 
+class RenameSpeakers(QDialog):
+    def __init__(self, people, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('Rename speakers')
+        self.setMinimumWidth(380)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(18, 16, 18, 16)
+        lay.addWidget(label('Who is who?', 'h2'))
+        lay.addWidget(label('Type the real names; the transcript is updated everywhere.', 'muted', wrap=True))
+        self.edits = {}
+        for p in people:
+            e = QLineEdit(p)
+            e.setFixedWidth(200)
+            self.edits[p] = e
+            lay.addWidget(row(p, e))
+        btns = QHBoxLayout()
+        btns.addStretch(1)
+        cancel, save = button('Cancel'), button('Save', theme.I_CHECK, 'accent')
+        cancel.clicked.connect(self.reject)
+        save.clicked.connect(self.accept)
+        btns.addWidget(cancel)
+        btns.addWidget(save)
+        lay.addLayout(btns)
+        theme.style_titlebar(self)
+
+    def names(self):
+        return {old: e.text() for old, e in self.edits.items()}
+
+
+class VoiceDialog(QDialog):
+    """Records 20 seconds of your voice and keeps its fingerprint (never the audio)."""
+    SECS = 20
+    TEXT = ('أهلاً، أنا بسجّل صوتي عشان Kalam يعرفني في الـ meetings. النهارده عندنا شوية tasks محتاجين نخلّصها، '
+            'وأول حاجة هنراجع الـ dashboard ونشوف الـ numbers بتاعة الأسبوع اللي فات. بعد كده هنتكلم عن الـ plan '
+            'بتاع الشهر الجاي، ومين هيمسك إيه. لو فيه أي أسئلة قولوا، وأنا هبعت الـ notes بعد الـ meeting.')
+
+    def __init__(self, cfg, parent=None):
+        super().__init__(parent)
+        self.cfg = cfg
+        self.setWindowTitle('Record my voice')
+        self.setMinimumWidth(480)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(18, 16, 18, 16)
+        lay.addWidget(label('Record your voice', 'h2'))
+        lay.addWidget(label(f'Press Start and read this out loud the way you normally talk ({self.SECS} seconds):',
+                            'muted', wrap=True))
+        text = QPlainTextEdit(self.TEXT)
+        text.setReadOnly(True)
+        text.setFixedHeight(110)
+        _rtl(text, self.TEXT)
+        lay.addWidget(text)
+        self.bar = QProgressBar()
+        self.bar.setRange(0, self.SECS * 10)
+        self.bar.setTextVisible(False)
+        self.bar.setFixedHeight(8)
+        lay.addWidget(self.bar)
+        self.status = label('Kalam keeps only a voice fingerprint, not the recording.', 'small', wrap=True)
+        lay.addWidget(self.status)
+        btns = QHBoxLayout()
+        btns.addStretch(1)
+        self.close_b, self.start_b = button('Close'), button('Start', theme.I_RECORD, 'accent')
+        self.close_b.clicked.connect(self.reject)
+        self.start_b.clicked.connect(self._start)
+        btns.addWidget(self.close_b)
+        btns.addWidget(self.start_b)
+        lay.addLayout(btns)
+        self.timer = QTimer(self, interval=100, timeout=self._tick)
+        theme.style_titlebar(self)
+
+    def _start(self):
+        self.rec = audio.Recorder(dict(self.cfg, keep_mic_open=False))
+        try:
+            self.rec.start()
+        except Exception as e:  # noqa: BLE001
+            self.status.setText(f'Microphone error: {e}')
+            return
+        self.start_b.setEnabled(False)
+        self.ticks = 0
+        self.status.setText('Listening… read the text above.')
+        self.timer.start()
+
+    def _tick(self):
+        self.ticks += 1
+        self.bar.setValue(self.ticks)
+        if self.ticks < self.SECS * 10:
+            return
+        self.timer.stop()
+        clip = self.rec.stop()
+        self.status.setText('Saving…')
+        QGuiApplication.processEvents()
+        try:
+            speakers.save_my_voice(clip)
+            self.status.setText('Done. Kalam will recognise you in meetings.')
+            self.start_b.setText('Record again')
+        except Exception as e:  # noqa: BLE001
+            self.status.setText(f'Could not save it: {e}')
+        self.start_b.setEnabled(True)
+
+
 class SettingsDialog(QDialog):
     def __init__(self, cfg, on_change, parent=None, page='General'):
         super().__init__(parent)
@@ -111,7 +211,8 @@ class SettingsDialog(QDialog):
         self.nav.setObjectName('nav')
         self.nav.setFixedWidth(170)
         self.stack = QStackedWidget()
-        builders = [self._general, self._floating, self._teach, self._history, self._shortcuts, self._advanced]
+        builders = [self._general, self._floating, self._meetings, self._teach, self._history, self._shortcuts,
+                    self._advanced]
         for name, build in zip(PAGES, builders):
             self.nav.addItem(name)
             self.stack.addWidget(self._scroll(build()))
@@ -140,6 +241,8 @@ class SettingsDialog(QDialog):
             self._load_history()
         if PAGES[i] == 'Teach Kalam':
             self._load_fixes()
+        if PAGES[i] == 'Meetings':
+            self._load_meetings()
 
     def _scroll(self, page):
         page.setObjectName('page')
@@ -191,6 +294,8 @@ class SettingsDialog(QDialog):
         c.addWidget(row('Show the live caption', self._toggle('show_caption'),
                         'A strip at the bottom of the screen with what Kalam hears while you talk. '
                         'Your text still goes straight into your document.'))
+        c.addWidget(row('Show the status strip', self._toggle('show_status'),
+                        'Listening / Writing… at the bottom of the screen. Off: the floating mic\'s ring shows it.'))
 
         c = self._card(lay, 'Speaking')
         lang = QComboBox()
@@ -265,6 +370,114 @@ class SettingsDialog(QDialog):
                                               'Images (*.png *.jpg *.jpeg *.gif *.webp *.bmp)')
         if path:
             self._choose_skin(skins.import_image(path))
+
+    # ── Meetings ─────────────────────────────────────────────────────────────
+    def _meetings(self):
+        w, lay = self._page('Meetings', 'Kalam writes down a whole meeting: who said what, in Arabic and English. '
+                                        'Nothing shows on screen while it records; the floating mic turns violet.')
+        c = self._card(lay, 'Start and stop')
+        c.addWidget(label(f'Right-click the floating mic > Start meeting mode, or press {self.cfg["meeting_key"].title()}. '
+                          'Click the floating mic (or press the shortcut again) to stop: the transcript is saved and '
+                          'a notification opens it.', 'muted', wrap=True))
+        c.addWidget(label('It records your microphone and the sound of your computer (the other people in Zoom, '
+                          'Teams or Meet). Let everyone know you are recording.', 'small', wrap=True))
+
+        c = self._card(lay, 'People')
+        c.addWidget(row('Tell the other people apart', self._toggle('meeting_speakers'),
+                        'Speaker 1, Speaker 2… by voice. Off: everyone else is "Others".'))
+        name = QLineEdit(self.cfg['your_name'] or meeting.default_name())
+        name.setFixedWidth(200)
+        name.editingFinished.connect(lambda: self._set(your_name=name.text().strip()))
+        c.addWidget(row('Your name in transcripts', name))
+        self.voice_status = label('', 'small', wrap=True)
+        rec = button('Record my voice', theme.I_RECORD)
+        rec.clicked.connect(self._record_voice)
+        rec.setEnabled(speakers.available())
+        vb = QWidget()
+        vl = QHBoxLayout(vb)
+        vl.setContentsMargins(0, 0, 0, 0)
+        vl.addWidget(rec)
+        c.addWidget(row('Your voice', vb, 'For meetings in one room with one microphone: Kalam finds you among '
+                                         'the speakers. 20 seconds, once.'))
+        c.addWidget(self.voice_status)
+        self._voice_label()
+
+        c = self._card(lay, 'Files')
+        folder = button(str(meeting.meetings_dir()), theme.I_FOLDER, 'ghost', 'Open the folder')
+        folder.clicked.connect(lambda: os.startfile(meeting.meetings_dir()))
+        c.addWidget(folder, 0, Qt.AlignLeft)
+        c.addWidget(row('Keep the recordings', self._toggle('keep_meeting_audio'),
+                        'Saves your track and the others\' track next to each transcript.'))
+
+        c = self._card(lay, 'Your meetings')
+        self.meet_list = QListWidget()
+        self.meet_list.setObjectName('list')
+        self.meet_list.setMinimumHeight(170)
+        self.meet_list.itemDoubleClicked.connect(lambda _: self._open_meeting())
+        c.addWidget(self.meet_list)
+        mb = QHBoxLayout()
+        for text, glyph, fn, kind in (('Open', theme.I_OPEN, self._open_meeting, None),
+                                      ('Rename speakers…', theme.I_RENAME, self._rename_meeting, None),
+                                      ('Copy for AI', theme.I_COPY, self._copy_meeting, 'accent')):
+            b = button(text, glyph, kind)
+            b.clicked.connect(fn)
+            mb.addWidget(b)
+        mb.insertStretch(2, 1)
+        c.addLayout(mb)
+        self.meet_note = label('Copy for AI copies the transcript with a prompt: paste it into ChatGPT, Claude or '
+                               'Gemini for a summary, decisions and action items.', 'small', wrap=True)
+        c.addWidget(self.meet_note)
+        lay.addStretch(1)
+        return w
+
+    def _voice_label(self):
+        if not speakers.available():
+            self.voice_status.setText('Speaker models are missing from this installation.')
+        elif speakers.my_voice() is not None:
+            self.voice_status.setText('Recorded. You can record it again any time.')
+        else:
+            self.voice_status.setText('Not recorded yet.')
+
+    def _record_voice(self):
+        VoiceDialog(self.cfg, self).exec()
+        self._voice_label()
+
+    def _load_meetings(self):
+        self.meet_list.clear()
+        for m in meeting.list_meetings():
+            it = QListWidgetItem(f'{m["title"]}\n{m["length"]}  ·  {m["people"]}')
+            it.setData(Qt.UserRole, str(m['path']))
+            self.meet_list.addItem(it)
+        if not self.meet_list.count():
+            it = QListWidgetItem('No meetings yet.')
+            it.setFlags(Qt.NoItemFlags)
+            self.meet_list.addItem(it)
+        else:
+            self.meet_list.setCurrentRow(0)
+
+    def _picked_meeting(self):
+        it = self.meet_list.currentItem()
+        return it.data(Qt.UserRole) if it else None
+
+    def _open_meeting(self):
+        path = self._picked_meeting()
+        if path:
+            os.startfile(path)
+
+    def _copy_meeting(self):
+        path = self._picked_meeting()
+        if path:
+            QGuiApplication.clipboard().setText(meeting.ai_prompt(path))
+            self.meet_note.setText('Copied: paste it into your AI.')
+
+    def _rename_meeting(self):
+        path = self._picked_meeting()
+        if not path:
+            return
+        dlg = RenameSpeakers(meeting.speakers_in(path), self)
+        if dlg.exec() == QDialog.Accepted:
+            meeting.rename_speakers(path, dlg.names())
+            self._load_meetings()
 
     # ── Teach Kalam ──────────────────────────────────────────────────────────
     def _teach(self):
@@ -439,7 +652,8 @@ class SettingsDialog(QDialog):
         w, lay = self._page('Shortcuts', 'They work in every app. Esc cancels while Kalam is listening.')
         c = self._card(lay)
         for key, text, hint in (('hold_key', 'Hold to talk', 'Hold, speak, let go.'),
-                                ('toggle_key', 'Press to start / stop', 'For longer dictation; nothing to hold.')):
+                                ('toggle_key', 'Press to start / stop', 'For longer dictation; nothing to hold.'),
+                                ('meeting_key', 'Meeting mode', 'Start recording a meeting; press again to save it.')):
             edit = QLineEdit(self.cfg[key])
             edit.setFixedWidth(170)
             edit.editingFinished.connect(lambda e=edit, k=key: self._save_key(e, k))

@@ -121,8 +121,9 @@ class Engine:
         return 'en' if en > 0.8 and en > 4 * ar else 'ar'
 
     # ── transcription ────────────────────────────────────────────────────────
-    def transcribe(self, audio):
-        """audio: float32 mono 16 kHz. Returns (text, info dict)."""
+    def transcribe(self, audio, with_segments=False):
+        """audio: float32 mono 16 kHz. Returns (text, info dict).
+        with_segments: info['segments'] = [(start, end, text)] in seconds, for meeting transcripts."""
         t0 = time.time()
         secs = len(audio) / SR
         if secs < 0.35 or float(np.sqrt(np.mean(audio ** 2))) < 0.002:
@@ -142,7 +143,7 @@ class Engine:
             temperature=[0.0, 0.5],  # one retry only: 6 fallbacks can take 10 s on a repetitive clip
             vad_parameters={'min_silence_duration_ms': 500, 'speech_pad_ms': 300},
         )
-        parts = []
+        parts, pieces = [], []
         for s in segs:
             t = s.text.strip()
             low = t.lower()
@@ -151,10 +152,17 @@ class Engine:
             if s.no_speech_prob > 0.6 and s.avg_logprob < -1.0:
                 continue
             parts.append(t)
+            if with_segments:
+                cleaned = self.clean(t, lang)
+                if cleaned:
+                    pieces.append((round(s.start, 2), round(s.end, 2), cleaned))
         text = self.clean(' '.join(parts), lang)
         if text:
             self.last_text, self.last_lang, self.last_time = text, lang, time.time()
-        return text, {'secs': round(secs, 1), 'lang': lang, 'took': round(time.time() - t0, 2)}
+        info = {'secs': round(secs, 1), 'lang': lang, 'took': round(time.time() - t0, 2)}
+        if with_segments:
+            info['segments'] = pieces
+        return text, info
 
     def preview(self, audio):
         """Fast, rough pass for the live caption (greedy, no VAD). The pasted text comes from transcribe()."""

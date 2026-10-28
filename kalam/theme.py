@@ -16,7 +16,8 @@ DARK = dict(bg='#111113', surface='#1B1B1F', surface2='#26262B', border='#303036
 ICON_FONTS = ['Segoe Fluent Icons', 'Segoe MDL2 Assets']
 # Segoe MDL2 / Fluent glyphs
 I_SETTINGS, I_HISTORY, I_COPY, I_TEACH, I_ADD, I_DELETE, I_IMAGE, I_CHECK, I_PASTE, I_MIC = (
-    '', '', '', '', '', '', '', '', '', '')
+    '\uE713', '\uE81C', '\uE8C8', '\uE7BE', '\uE710', '\uE74D', '\uEB9F', '\uE73E', '\uE77F', '\uE720')
+I_PEOPLE, I_FOLDER, I_OPEN, I_RECORD, I_RENAME = '\uE716', '\uE838', '\uE8A7', '\uE7C8', '\uE8AC'
 
 
 def is_dark():

@@ -30,7 +30,7 @@ class SkinButton(QWidget):
 
     def set_state(self, state, level=0.0):
         self.state, self.level = state, level
-        self.spinner.start() if state == 'work' else self.spinner.stop()
+        self.spinner.start() if state in ('work', 'meeting') else self.spinner.stop()
         self.update()
 
     def mouseReleaseEvent(self, e):
@@ -57,6 +57,7 @@ class MainWindow(QMainWindow):
     settings_clicked = Signal()
     history_clicked = Signal()
     teach_clicked = Signal()
+    meetings_clicked = Signal()
     learn_requested = Signal(str, str)  # what Kalam wrote, what you corrected it to
     closed_to_tray = Signal()
 
@@ -67,7 +68,7 @@ class MainWindow(QMainWindow):
         self.original = ''
         self.setWindowTitle('Kalam · كلام')
         self.setWindowIcon(mic_icon('ready'))
-        self.setFixedWidth(400)
+        self.setFixedWidth(424)
 
         # header
         title = label('Kalam', 'h1')
@@ -123,20 +124,23 @@ class MainWindow(QMainWindow):
         self.model = QComboBox(editable=True)
         self.model.addItems(config.MODELS)
         self.model.setCurrentText(cfg['model'])
-        self.model.setFixedWidth(150)
+        self.model.setFixedWidth(118)
         self.model.setToolTip('Whisper model (large-v3 = best for Egyptian Arabic)')
         self.model.activated.connect(lambda _: self.model_chosen.emit(self.model.currentText().strip()))
         self.model.lineEdit().returnPressed.connect(lambda: self.model_chosen.emit(self.model.currentText().strip()))
         teach = button('Teach', theme.I_TEACH, 'ghost', 'Teach Kalam your words, with your AI')
-        history = button('History', theme.I_HISTORY, 'ghost', 'Everything you dictated')
+        meetings = button('Meetings', theme.I_PEOPLE, 'ghost', 'Meeting mode and your meeting transcripts')
+        history = button('', theme.I_HISTORY, 'ghost', 'History: everything you dictated')
         settings = button('', theme.I_SETTINGS, 'ghost', 'Settings')
         teach.clicked.connect(self.teach_clicked)
+        meetings.clicked.connect(self.meetings_clicked)
         history.clicked.connect(self.history_clicked)
         settings.clicked.connect(self.settings_clicked)
         foot = QHBoxLayout()
         foot.addWidget(self.model)
         foot.addStretch(1)
         foot.addWidget(teach)
+        foot.addWidget(meetings)
         foot.addWidget(history)
         foot.addWidget(settings)
         self.footer = label('', 'small')
