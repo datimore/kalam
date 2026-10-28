@@ -89,6 +89,22 @@ class Recorder:
             self.recording = True
         self._open()
 
+    def audio_since(self, start):
+        """Live mode: (16 kHz audio recorded after raw sample `start`, raw samples recorded so far)."""
+        with self.lock:
+            chunks = list(self.chunks)
+        total = sum(len(c) for c in chunks)
+        need = total - start
+        if need <= 0:
+            return np.zeros(0, np.float32), total
+        parts, got = [], 0
+        for c in reversed(chunks):
+            parts.append(c)
+            got += len(c)
+            if got >= need:
+                break
+        return _to_16k(np.concatenate(parts[::-1])[-need:], self.rate), total
+
     def stop(self):
         with self.lock:
             self.recording = False

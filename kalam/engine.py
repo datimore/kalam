@@ -156,6 +156,17 @@ class Engine:
             self.last_text, self.last_lang, self.last_time = text, lang, time.time()
         return text, {'secs': round(secs, 1), 'lang': lang, 'took': round(time.time() - t0, 2)}
 
+    def preview(self, audio):
+        """Fast, rough pass for the live caption (greedy, no VAD). The pasted text comes from transcribe()."""
+        lang = 'en' if self.cfg['language'] == 'en' else 'ar'
+        prompt = config.read_text('prompt_ar.txt' if lang == 'ar' else 'prompt_en.txt')
+        secs = len(audio) / SR
+        segs, _ = self.model.transcribe(
+            audio, language=lang, beam_size=1, initial_prompt=prompt, condition_on_previous_text=False,
+            vad_filter=False, without_timestamps=True, temperature=0.0, max_new_tokens=min(220, int(12 * secs) + 30))
+        parts = [s.text.strip() for s in segs if not any(h in s.text.lower() for h in HALLUCINATIONS)]
+        return self.clean(' '.join(parts), lang)
+
     def clean(self, text, lang):
         text = re.sub(r'\s+', ' ', text).strip()
         if not text:

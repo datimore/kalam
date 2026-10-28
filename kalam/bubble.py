@@ -1,23 +1,23 @@
 """Floating mic bubble: always on top, click to start / stop, drag to move, drag to a screen edge to tuck it away.
 
 It never takes focus, so clicking it leaves the cursor in Word / Notion and the text still lands there.
+Its look comes from skins.py (classic mic, an emoji, or your own picture / GIF).
 """
 import ctypes
 
 from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPen
+from PySide6.QtGui import QColor, QGuiApplication, QPainter
 from PySide6.QtWidgets import QWidget
 
-from .icons import STATE_COLORS, draw_mic
+from .icons import STATE_COLORS
+from .skins import Skin
 
 GWL_EXSTYLE = -20
 WS_EX_NOACTIVATE = 0x8000000
 WS_EX_TOOLWINDOW = 0x80
 
-DIAMETER = 56
+SIZES = {'Small': 44, 'Medium': 56, 'Large': 72}
 PAD = 10            # room around the circle for the voice-level halo
-SIZE = DIAMETER + 2 * PAD
-PEEK = 22           # pixels of the circle left on screen when tucked into an edge
 SNAP = 48           # drop the bubble this close to an edge and it tucks in
 DRAG_START = 5      # pixels the mouse must move before a press becomes a drag
 
@@ -27,13 +27,16 @@ class Bubble(QWidget):
     menu_requested = Signal(QPoint)
     placed = Signal(int, int, str)  # x, y, dock ('' | 'left' | 'right')
 
-    def __init__(self, x=None, y=None, dock=''):
+    def __init__(self, x=None, y=None, dock='', skin='mic', diameter=56):
         super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
-        self.setFixedSize(SIZE, SIZE)
         self.setCursor(Qt.PointingHandCursor)
-        self.setToolTip('Click to talk, click again to stop\nDrag to move · drag to the screen edge to tuck it away\nRight-click for options')
+        self.setToolTip('Click to talk, click again to stop\nDrag to move · drag to the screen edge to tuck it away\n'
+                        'Right-click for options')
+        self.skin = Skin(skin, self)
+        self.skin.changed.connect(self.update)
+        self.set_size(diameter)
         self.state, self.level, self.angle = 'loading', 0.0, 0
         self.dock = dock
         self.press_pos = self.press_win = None
@@ -44,6 +47,18 @@ class Bubble(QWidget):
         self._styled = False
         self._initial = (x, y)
 
+    def set_size(self, diameter):
+        self.diameter = diameter
+        self.size_ = diameter + 2 * PAD
+        self.peek = max(16, int(diameter * 0.4))  # how much stays on screen when tucked
+        self.setFixedSize(self.size_, self.size_)
+        if self.isVisible() and self.dock:
+            self.move(self._tucked_pos())
+        self.update()
+
+    def set_skin(self, skin_id):
+        self.skin.set(skin_id)
+
     # ── placement ────────────────────────────────────────────────────────────
     def _screen_rect(self, center=None):
         center = center or self.geometry().center()
@@ -53,26 +68,26 @@ class Bubble(QWidget):
     def _out_pos(self):
         """Fully visible position for the current dock side."""
         r = self._screen_rect()
-        x = r.left() - PAD + 4 if self.dock == 'left' else r.right() - SIZE + PAD - 3
+        x = r.left() - PAD + 4 if self.dock == 'left' else r.right() - self.size_ + PAD - 3
         return QPoint(x, self.y())
 
     def _tucked_pos(self):
         r = self._screen_rect()
-        x = r.left() - SIZE + PAD + PEEK if self.dock == 'left' else r.right() - PAD - PEEK + 1
+        x = r.left() - self.size_ + PAD + self.peek if self.dock == 'left' else r.right() - PAD - self.peek + 1
         return QPoint(x, self.y())
 
     def _clamp(self, p):
-        r = self._screen_rect(p + QPoint(SIZE // 2, SIZE // 2))
-        x = min(max(p.x(), r.left() - PAD), r.right() - SIZE + PAD)
-        y = min(max(p.y(), r.top() - PAD), r.bottom() - SIZE + PAD)
+        r = self._screen_rect(p + QPoint(self.size_ // 2, self.size_ // 2))
+        x = min(max(p.x(), r.left() - PAD), r.right() - self.size_ + PAD)
+        y = min(max(p.y(), r.top() - PAD), r.bottom() - self.size_ + PAD)
         return QPoint(x, y)
 
     def start(self):
         x, y = self._initial
         r = QGuiApplication.primaryScreen().availableGeometry()
-        if x is None or QGuiApplication.screenAt(QPoint(x + SIZE // 2, y + SIZE // 2)) is None:
+        if x is None or QGuiApplication.screenAt(QPoint(x + self.size_ // 2, y + self.size_ // 2)) is None:
             # first run (or that monitor is gone): middle of the right edge, tucked in
-            self.dock, x, y = 'right', r.right() - PAD - PEEK + 1, r.center().y() - SIZE // 2
+            self.dock, x, y = 'right', r.right() - PAD - self.peek + 1, r.center().y() - self.size_ // 2
         self.move(x, y)
         self.show()
         if not self._styled:  # belt and braces: Windows must never activate the bubble
@@ -184,25 +199,16 @@ class Bubble(QWidget):
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        c = QColor(STATE_COLORS.get(self.state, STATE_COLORS['ready']))
-        cx = cy = SIZE / 2
-        r = DIAMETER / 2
+        cx = cy = self.size_ / 2
+        r = self.diameter / 2
         if self.state == 'listen':  # halo grows with the voice
-            halo = QColor(c)
+            halo = QColor(STATE_COLORS['listen'])
             halo.setAlpha(80)
             rr = r + 2 + min(PAD - 2, self.level * 90)
             p.setPen(Qt.NoPen)
             p.setBrush(halo)
             p.drawEllipse(QRectF(cx - rr, cy - rr, 2 * rr, 2 * rr))
-        shadow = QColor(0, 0, 0, 60)
         p.setPen(Qt.NoPen)
-        p.setBrush(shadow)
+        p.setBrush(QColor(0, 0, 0, 60))
         p.drawEllipse(QRectF(cx - r, cy - r + 2, 2 * r, 2 * r))
-        p.setBrush(c)
-        p.setPen(QPen(QColor(255, 255, 255, 200), 2))
-        p.drawEllipse(QRectF(cx - r, cy - r, 2 * r, 2 * r))
-        if self.state == 'work':  # spinning arc while writing
-            p.setPen(QPen(QColor('white'), 3, Qt.SolidLine, Qt.RoundCap))
-            p.setBrush(Qt.NoBrush)
-            p.drawArc(QRectF(cx - r + 6, cy - r + 6, 2 * r - 12, 2 * r - 12), -self.angle * 16, 100 * 16)
-        draw_mic(p, cx, cy, DIAMETER * 0.46)
+        self.skin.paint(p, QRectF(cx - r, cy - r, 2 * r, 2 * r), self.state, self.level, self.angle)

@@ -32,6 +32,10 @@ DEFAULTS = {
     'use_context': False,        # feed the last sentence back (off: one wrong sentence made the next ones drift)
     'beam_size': 5,
     'max_seconds': 300,
+    'live_mode': True,           # write each sentence as soon as you pause (toggle / floating mic)
+    'live_pause': 1.0,           # seconds of silence that end a sentence
+    'bubble_skin': 'mic',        # mic | emoji:🤖 | image:skins/file.png
+    'bubble_size': 56,
     'show_bubble': True,         # floating mic on top of every window
     'bubble_x': None,
     'bubble_y': None,

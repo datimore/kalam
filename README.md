@@ -1,6 +1,6 @@
 # Kalam · كلام
 
-**Hold a key, talk the way you talk, and the text appears where your cursor is.**
+**Click the floating mic (or hold a key), talk the way you talk, and the text appears where your cursor is, sentence by sentence.**
 Built for Egyptian Arabic mixed with English, written the way you say it: no formal Arabic, no translation.
 
 > «محتاج أعمل update للـ dashboard قبل الـ meeting بكره»
@@ -9,7 +9,8 @@ Built for Egyptian Arabic mixed with English, written the way you say it: no for
 Works in Word, Notion, the browser, Outlook, WhatsApp desktop: any app with a text cursor.
 Everything runs on your own computer. Nothing is uploaded.
 
-<p align="center"><img src="assets/screenshot.png" width="340" alt="Kalam window"></p>
+<p align="center"><img src="assets/screenshot.png" width="300" alt="Kalam window, light"> &nbsp; <img src="assets/screenshot-dark.png" width="300" alt="Kalam window, dark"></p>
+<p align="center"><img src="assets/live-caption.png" width="560" alt="Live caption while you talk"></p>
 
 ## Install (Windows 10 / 11)
 
@@ -27,20 +28,24 @@ Uninstall from **Settings → Apps → Kalam**.
 
 | Do this | What happens |
 |---|---|
-| **Hold Right Ctrl**, speak, release | Text is inserted at the cursor ~1–2 s later |
-| **Ctrl+Alt+Space**, speak, **Ctrl+Alt+Space** again | Same, for longer dictation (no key to hold) |
-| Click the **floating mic** (the circle on top of every window) | Start; click again to stop. The text lands at your cursor |
-| Click the **mic button** in the Kalam window | Start / stop; the text goes to the clipboard, ready to paste |
-| **Esc** while it's listening | Cancel, nothing is inserted |
+| Click the **floating mic** (the circle on top of every window), talk, click again | **Live mode**: each sentence lands at your cursor ~2 s after you pause |
+| **Ctrl+Alt+Space**, talk, **Ctrl+Alt+Space** again | Same as the floating mic, from the keyboard |
+| **Hold Right Ctrl**, talk, let go | Everything is written the moment you let go (~1 s, even for long dictations) |
+| Click the big mic in the Kalam window | Start / stop; the text goes to the clipboard, ready to paste |
+| **Esc** while it's listening | Cancel the rest |
 
-- **The Kalam window** shows the status, your last dictation (with a Copy button), the model picker, Settings and History.
-  Closing it (✕) keeps Kalam running in the tray, so the shortcut still works. Quit from the tray icon.
+- **Live caption**: while you talk, a caption at the bottom of the screen shows what Kalam hears, word by word.
+  What lands in your document is the final, careful version of each sentence; nothing is ever deleted or
+  rewritten in your document. Turn live mode off, or make it wait longer before a sentence ends, in Settings > General.
 - **The floating mic** stays on top of everything and never takes the cursor from your document. Drag it anywhere;
-  drag it to the left or right screen edge (or right-click → *Tuck into the edge*) and it hides half-way, sliding out
-  when you hover or while it's listening. Turn it off in Settings or the tray menu (*Floating mic*).
-- **A small pill** at the bottom of the screen shows *Listening* (red) and *Writing…* (amber).
-  It never takes the cursor away from your document.
-- **The tray icon** (green mic) opens the window on click; right-click for settings, pause, start with Windows, quit.
+  drop it on the left or right screen edge (or right-click > *Tuck into the edge*) to tuck it half-way in. It slides
+  out when you hover and while it's listening.
+- **Make it yours**: Settings > Floating mic > pick a look (robot, cat, camel, fox…) or **use any picture or animated
+  GIF**. A ring around it shows the state: green ready, red listening, amber writing. Small / Medium / Large.
+- **The Kalam window** (light and dark, follows Windows) shows the status, your last dictation, the model, and
+  Teach / History / Settings. Closing it keeps Kalam running in the tray.
+
+<p align="center"><img src="assets/looks.png" width="760" alt="Floating mic looks in each state"></p>
 
 ## Why it keeps your Egyptian Arabic
 
@@ -61,17 +66,21 @@ Generic dictation tools turn Egyptian Arabic into formal Arabic, or write Englis
 Safety nets for Whisper's known quirks: silence and very short presses are ignored, YouTube-style phrases
 it invents on silence ("اشتركوا في القناة") are dropped, and repetition loops are cut.
 
-## Make it understand you better
+## Teach Kalam your words (no files to edit)
 
-Settings → the buttons at the bottom, or the tray menu. The files live in `%APPDATA%\Kalam`
-(`my-settings` when running from source). Changes apply on the next dictation; no restart.
+Whisper sometimes mishears a word the same way every time. Kalam keeps a list of **fixes** (wrong > right)
+and applies it to every dictation. You fill it in two ways:
 
-| File | What to put there |
-|---|---|
-| `prompt_ar.txt` | One short line describing how you talk. Keep it short: real sentences get copied into your text. |
-| `words.txt` | English terms and names you say often (only used if *Use my hint words* is on; keep it short). |
-| `fixes.txt` | `wrong = right`, one per line, for words it keeps getting wrong. |
-| `history.txt` | Everything you dictated, the easiest place to spot new fixes. |
+1. **Correct it on the spot.** In the Kalam window, fix the wrong word in *Last dictation* and press **Learn**
+   (or do it for any older dictation in History). Kalam shows what it understood, e.g. «بجرّر ← بجرّب»;
+   untick anything that would be a bad rule, press Learn, and it doesn't make that mistake again.
+2. **Ask your AI.** Settings > Teach Kalam > **Copy prompt**. Paste it into ChatGPT, Claude or Gemini: it contains
+   your recent dictations and asks your AI (which already knows your work, tools and names) for the misheard words.
+   Paste its answer back, review, done.
+
+All fixes are listed in Settings > Teach Kalam, where you can edit or delete them.
+
+<p align="center"><img src="assets/teach.png" width="640" alt="Teach Kalam"></p>
 
 ## Models
 
@@ -89,12 +98,16 @@ Models download the first time you pick them.
 
 ## Settings
 
-- **Run on**: auto / cuda (NVIDIA GPU) / cpu. Auto falls back to CPU if the GPU fails.
-- **Hold to talk / Press to start-stop**: click *Set…* and press the keys. Avoid Alt+Shift (Windows language switch).
-- **Microphone**: pick a specific mic, or leave Windows default.
-- **Insert text by**: *paste* (fast; your clipboard text is restored afterwards) or *type* (for apps that block paste).
-- **Keep mic open**: keeps 0.4 s of audio from before you press, so the first word is never cut. The Windows mic indicator stays on.
-- **Remove fillers**: drops «إممم», «ااا», "umm".
+Everything applies instantly.
+
+- **General**: live mode and how long a pause ends a sentence (Quick / Normal / Relaxed), language, microphone,
+  filler removal, start with Windows.
+- **Floating mic**: show / hide, size, look (built-in or your own picture / GIF).
+- **Teach Kalam** and **History**: see above.
+- **Shortcuts**: click *Set…* and press the keys. Avoid Alt+Shift (Windows language switch).
+- **Advanced**: Whisper model, GPU / CPU, paste vs type, keep the mic open (never cuts your first word),
+  the one-line style prompt, and two experimental options (hint words, feeding the last sentence back) that are
+  off because they hurt accuracy in testing.
 
 ## Troubleshooting
 
@@ -118,13 +131,18 @@ Build the exe and the installer: install [Inno Setup 6](https://jrsoftware.org/i
 kalam/engine.py          faster-whisper + prompt + hotwords + fixes + hallucination filters
 kalam/audio.py           mic capture, resampling to 16 kHz, optional pre-roll
 kalam/inserter.py        paste / type at the cursor
-kalam/app.py             hotkeys, tray, worker thread, single instance, start with Windows
+kalam/app.py             hotkeys, tray, live mode (pause detection + sentence queue), worker thread
 kalam/main_window.py     the mini window (Qt)
-kalam/overlay.py         the non-focus-stealing pill
+kalam/settings_window.py the settings window (General, Floating mic, Teach, History, Shortcuts, Advanced)
+kalam/bubble.py          the floating mic; kalam/skins.py its looks (mic, emoji, picture, GIF)
+kalam/learn.py           fixes: learn from corrections, AI prompt, read the AI's answer
+kalam/overlay.py         status pill + live caption (never takes focus)
+kalam/theme.py           light / dark design tokens and stylesheet
 kalam.spec               PyInstaller recipe (ships only cuBLAS from the NVIDIA libraries)
 installer/kalam.iss      Inno Setup script (per-user install, no admin)
 tools/try_file.py        run the engine on clips of a WAV:  python tools/try_file.py voice.wav 0:6 12:8
 tools/e2e.py             end-to-end: real hotkeys + paste, with a WAV in place of the mic
+tools/live_sim.py        live mode end to end: real sentences + pauses streamed in real time
 ```
 
 ## License
