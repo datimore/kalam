@@ -2,7 +2,7 @@
 ; Build:  "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" installer\kalam.iss   (after pyinstaller kalam.spec)
 
 #define AppName "Kalam"
-#define AppVersion "1.3.0"
+#define AppVersion "1.3.1"
 #define AppExe "Kalam.exe"
 ; test builds:  ISCC /DTEST installer\kalam.iss  -> separate identity, so installing / uninstalling a
 ; test copy never touches the real Kalam's entry in Settings > Apps or its start-with-Windows value

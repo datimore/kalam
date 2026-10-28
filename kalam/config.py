@@ -34,6 +34,7 @@ DEFAULTS = {
     'max_seconds': 300,
     'live_mode': True,           # write each sentence as soon as you pause (toggle / floating mic)
     'live_pause': 1.0,           # seconds of silence that end a sentence
+    'show_caption': True,        # live caption of what Kalam hears (the text itself goes into your app)
     'bubble_skin': 'mic',        # mic | emoji:🤖 | image:skins/file.png
     'bubble_size': 56,
     'show_bubble': True,         # floating mic on top of every window
@@ -43,7 +44,7 @@ DEFAULTS = {
 }
 
 FILES = ['prompt_ar.txt', 'prompt_en.txt', 'words.txt', 'fixes.txt']
-SETTINGS_VERSION = 2
+SETTINGS_VERSION = 3
 # the long prompt shipped before 1.2.0: Whisper reused its words («الـ data», «طبعاً») and skipped speech
 OLD_DEFAULT_PROMPTS = {'05b84ee60a0e77f915c78ce6298cd50f143f02180ebde030e2b3af3dee211d4f'}
 
@@ -72,6 +73,10 @@ def load():
             pass
         if cfg.get('settings_version', 1) < 2:
             cfg['use_context'] = False  # the old default caused drift; users can turn it back on
+    # 1.3.0's shortcut boxes could save an empty value or "press the keys…": put the defaults back
+    for key in ('hold_key', 'toggle_key'):
+        if not str(cfg.get(key, '')).strip() or 'press' in str(cfg[key]):
+            cfg[key] = DEFAULTS[key]
     cfg['settings_version'] = SETTINGS_VERSION
     return cfg
 

@@ -188,6 +188,9 @@ class SettingsDialog(QDialog):
         pause = Segmented(PAUSES, min(PAUSES, key=lambda p: abs(p[1] - self.cfg['live_pause']))[1])
         pause.changed.connect(lambda v: self._set(live_pause=v))
         c.addWidget(row('Pause that ends a sentence', pause, 'Relaxed waits longer, for people who stop to think.'))
+        c.addWidget(row('Show the live caption', self._toggle('show_caption'),
+                        'A strip at the bottom of the screen with what Kalam hears while you talk. '
+                        'Your text still goes straight into your document.'))
 
         c = self._card(lay, 'Speaking')
         lang = QComboBox()
@@ -439,7 +442,7 @@ class SettingsDialog(QDialog):
                                 ('toggle_key', 'Press to start / stop', 'For longer dictation; nothing to hold.')):
             edit = QLineEdit(self.cfg[key])
             edit.setFixedWidth(170)
-            edit.editingFinished.connect(lambda e=edit, k=key: self._set(**{k: e.text().strip()}))
+            edit.editingFinished.connect(lambda e=edit, k=key: self._save_key(e, k))
             setb = button('Set…')
             setb.clicked.connect(lambda _=False, e=edit, k=key: self._capture(e, k))
             box = QWidget()
@@ -452,10 +455,21 @@ class SettingsDialog(QDialog):
         lay.addStretch(1)
         return w
 
+    def _save_key(self, edit, key):
+        text = edit.text().strip()
+        if not text or edit.property('capturing'):
+            edit.setText(self.cfg[key])  # never save an empty shortcut or the placeholder
+            return
+        if text != self.cfg[key]:
+            self._set(**{key: text})
+
     def _capture(self, edit, key):
-        edit.setText('press the keys…')
+        edit.setProperty('capturing', True)
+        edit.clear()
+        edit.setPlaceholderText('press the keys…')
         sig = _Captured(self)
-        sig.done.connect(lambda hk: (edit.setText(hk), self._set(**{key: hk})))
+        sig.done.connect(lambda hk: (edit.setProperty('capturing', False), edit.setText(hk or self.cfg[key]),
+                                     self._save_key(edit, key)))
         threading.Thread(target=lambda: sig.done.emit(keyboard.read_hotkey(suppress=False)), daemon=True).start()
 
     # ── Advanced ─────────────────────────────────────────────────────────────

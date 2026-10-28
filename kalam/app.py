@@ -43,11 +43,39 @@ def _key_matches(spec, name):
     return name == spec or (spec in MODIFIER_FAMILIES and name in (f'left {spec}', f'right {spec}'))
 
 
-def _own_window_focused():
-    hwnd = ctypes.windll.user32.GetForegroundWindow()
+user32 = ctypes.windll.user32
+
+
+def _is_own(hwnd):
     pid = ctypes.c_ulong()
-    ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
     return pid.value == os.getpid()
+
+
+def _own_window_focused():
+    return _is_own(user32.GetForegroundWindow())
+
+
+def _title(hwnd):
+    buf = ctypes.create_unicode_buffer(120)
+    user32.GetWindowTextW(hwnd, buf, 120)
+    return buf.value
+
+
+def _bring_back(hwnd):
+    """Give focus back to the app you were typing in (allowed: Kalam's window is the foreground one)."""
+    if not hwnd or not user32.IsWindow(hwnd):
+        return False
+    if user32.IsIconic(hwnd):
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+    user32.SetForegroundWindow(hwnd)
+    end = time.time() + 0.6
+    while time.time() < end:
+        if user32.GetForegroundWindow() == hwnd:
+            time.sleep(0.08)  # let the app put its caret back
+            return True
+        time.sleep(0.02)
+    return False
 
 
 class Session:
@@ -85,6 +113,7 @@ class App:
         self.toggle_latched = False
         self.rec_started = 0.0
         self.downloading = False
+        self.last_target = 0        # the last non-Kalam window that had focus
 
         self.overlay = Overlay()
         self.bubble = Bubble(self.cfg['bubble_x'], self.cfg['bubble_y'], self.cfg['bubble_dock'],
@@ -104,6 +133,7 @@ class App:
         self.pump = QTimer(timeout=self._pump, interval=30)
         self.ticker = QTimer(timeout=self._tick, interval=80)
         self.dl_timer = QTimer(timeout=self._download_progress, interval=1000)
+        self.focus_watch = QTimer(timeout=self._track_focus, interval=250)
         QApplication.styleHints().colorSchemeChanged.connect(self._retheme)
         if not start_hidden:
             self.win.show_front()
@@ -157,6 +187,24 @@ class App:
                                   + ' to dictate. Right-click the tray icon to quit.', mic_icon('ready'), 5000)
             self.cfg['tray_tip_shown'] = True
             config.save(self.cfg)
+
+    def _track_focus(self):
+        hwnd = user32.GetForegroundWindow()
+        if hwnd and not _is_own(hwnd) and _title(hwnd) not in ('', 'Program Manager'):
+            self.last_target = hwnd
+
+    def _paste(self, text):
+        """Type `text` where you were working. False if there is nowhere to put it (then it goes to the clipboard)."""
+        target = user32.GetForegroundWindow()
+        if _is_own(target):
+            # Kalam's own window is in front (e.g. you clicked its mic): go back to the app you were in
+            target = self.last_target
+            if not _bring_back(target):
+                logging.info('paste: no app to go back to, using the clipboard')
+                return False
+        logging.info('paste %d chars into %r', len(text), _title(target))
+        inserter.insert(text, self.cfg['insert_method'])
+        return True
 
     def _retheme(self, *_):
         theme.apply(self.qapp)
@@ -249,8 +297,12 @@ class App:
             return
         s = self.session
         secs = time.time() - self.rec_started
-        hint = '  ·  Esc cancels' if self.mode == 'toggle' else ''
-        caption = ' '.join(s.texts + ([s.preview] if s.preview else [])) if s and s.live else None
+        if s and s.live:
+            hint = '  ·  writes when you pause' if self.mode == 'toggle' else '  ·  writes when you let go'
+        else:
+            hint = '  ·  Esc cancels' if self.mode == 'toggle' else ''
+        show = s and s.live and self.cfg['show_caption']
+        caption = ' '.join(s.texts + ([s.preview] if s.preview else [])) if show else None
         self.overlay.show_msg(f'{self._status_text()}{hint}', 'listen', level=self.recorder.level, caption=caption)
         self.win.set_state('listen', self._status_text(), self.recorder.level)
         self.bubble.set_state('listen', self.recorder.level)
@@ -274,7 +326,7 @@ class App:
             with s.lock:  # the watcher must not cut another sentence from audio we're about to send
                 s.stopped = True
                 start16 = int(s.commit_raw * SR / self.recorder.rate)
-            caption = ' '.join(s.texts + ([s.preview] if s.preview else []))
+            caption = ' '.join(s.texts + ([s.preview] if s.preview else [])) if self.cfg['show_caption'] else ''
             self.overlay.show_msg('Writing…', 'work', caption=caption or None)
             self.jobs.put(('sentence', (s, audio[start16:], True)))
         else:
@@ -371,9 +423,8 @@ class App:
             s.texts.append(text)
         if s.cancelled:
             return
-        # paste now, unless the hold key is still down or Kalam's own window has focus
-        if text and not last and s.mode == 'toggle' and not _own_window_focused():
-            inserter.insert(' '.join(s.held + [text]) + ' ', self.cfg['insert_method'])
+        # paste now, unless the hold key is still down
+        if text and not last and s.mode == 'toggle' and self._paste(' '.join(s.held + [text]) + ' '):
             s.held = []
         elif text:
             s.held.append(text)
@@ -395,13 +446,11 @@ class App:
             return
         self._history(full, info)
         rest = ' '.join(s.held)
-        if rest:
-            if _own_window_focused():
-                # dictated from Kalam's own window: nowhere to paste, so hand it over via the clipboard
-                pyperclip.copy(full)
-                self.ui.put(lambda: (self.win.set_last(full), self._done('Copied · paste it with Ctrl+V', 'ok', 2.5)))
-                return
-            inserter.insert(rest + (' ' if self.cfg['trailing_space'] else ''), self.cfg['insert_method'])
+        if rest and not self._paste(rest + (' ' if self.cfg['trailing_space'] else '')):
+            # no app to type into: hand it over via the clipboard
+            pyperclip.copy(rest)
+            self.ui.put(lambda: (self.win.set_last(full), self._done('Copied · paste it with Ctrl+V', 'ok', 2.5)))
+            return
         self.ui.put(lambda: (self.win.set_last(full), self._done()))
 
     def _load(self):
@@ -529,6 +578,7 @@ class App:
         except Exception:  # noqa: BLE001
             logging.exception('mic')
         self.pump.start()
+        self.focus_watch.start()
         self._show_bubble()
         return self.qapp.exec()
 
